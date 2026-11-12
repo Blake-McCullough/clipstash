@@ -1,0 +1,29 @@
+pkgname=clipstash-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Instant-replay clipping app built on gpu-screen-recorder: clip, trim, mix audio tracks, share to Pixeldrain"
+arch=('x86_64')
+url="https://github.com/Blake-McCullough/clipstash"
+license=('custom')
+depends=('qt6-base' 'mpv' 'ffmpeg' 'gpu-screen-recorder')
+makedepends=('cmake' 'ninja' 'git')
+provides=('clipstash')
+conflicts=('clipstash')
+source=("git+https://github.com/Blake-McCullough/clipstash.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd clipstash
+  printf "0.1.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cmake -S clipstash -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
