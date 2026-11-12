@@ -1,0 +1,20 @@
+#pragma once
+#include <QColor>
+#include <QIcon>
+#include <QString>
+
+namespace Theme {
+inline const QColor Bg{0x0f, 0x11, 0x15};
+inline const QColor Panel{0x16, 0x19, 0x20};
+inline const QColor Card{0x1c, 0x20, 0x29};
+inline const QColor Border{0x2a, 0x2f, 0x3a};
+inline const QColor Text{0xe6, 0xe8, 0xee};
+inline const QColor Muted{0x8b, 0x93, 0xa3};
+inline const QColor Accent{0x7c, 0x5c, 0xff};
+inline const QColor Good{0x3d, 0xd6, 0x8c};
+inline const QColor Bad{0xff, 0x5c, 0x6c};
+inline const QColor Warn{0xff, 0xb8, 0x4d};
+
+QString styleSheet();
+QIcon appIcon(bool recording = false);
+}
