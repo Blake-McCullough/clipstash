@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=Clipstash
+GenericName=Game Clips
+Comment=Instant-replay clips with gpu-screen-recorder
+Exec=clipstash
+Icon=io.github.blake_mccullough.clipstash
+Terminal=false
+Categories=AudioVideo;Video;Recorder;Game;
+Keywords=clip;replay;record;shadowplay;medal;
+StartupWMClass=clipstash
+Actions=SaveClip;
+
+[Desktop Action SaveClip]
+Name=Clip now
+Exec=clipstash --save-clip
