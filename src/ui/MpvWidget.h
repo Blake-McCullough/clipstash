@@ -45,6 +45,7 @@ private slots:
     void maybeUpdate();
 
 private:
+    void releaseGL();
     static void onUpdate(void *ctx);
     static void onWakeup(void *ctx);
     void command(const QStringList &args);

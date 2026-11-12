@@ -3,6 +3,7 @@
 #include <QGuiApplication>
 #include <QMouseEvent>
 #include <QOpenGLContext>
+#include <QTimer>
 
 #include <mpv/client.h>
 #include <mpv/render_gl.h>
@@ -32,8 +33,32 @@ MpvWidget::MpvWidget(QWidget *parent) : QOpenGLWidget(parent)
     mpv_set_option_string(m_mpv, "input-vo-keyboard", "no");
     mpv_set_option_string(m_mpv, "audio-client-name", "Clipstash");
     mpv_set_option_string(m_mpv, "config", "no");
-    mpv_set_option_string(m_mpv, "terminal", "no");
+    if (qEnvironmentVariableIsSet("CLIPSTASH_MPV_LOG")) {
+        mpv_set_option_string(m_mpv, "terminal", "yes");
+        mpv_set_option_string(m_mpv, "msg-level", "all=v");
+    } else {
+        mpv_set_option_string(m_mpv, "terminal", "no");
+    }
     mpv_set_option_string(m_mpv, "idle", "yes");
+    // Cheap rendering path: plain bilinear scaling and no float intermediate
+    // framebuffers. A clip preview does not need mpv's high-quality scalers,
+    // and this keeps GPU use negligible while a game is running.
+    mpv_set_option_string(m_mpv, "scale", "bilinear");
+    mpv_set_option_string(m_mpv, "dscale", "bilinear");
+    mpv_set_option_string(m_mpv, "dither-depth", "no");
+    mpv_set_option_string(m_mpv, "correct-downscaling", "no");
+    mpv_set_option_string(m_mpv, "linear-downscaling", "no");
+    mpv_set_option_string(m_mpv, "sigmoid-upscaling", "no");
+    mpv_set_option_string(m_mpv, "hdr-compute-peak", "no");
+    // Escape hatch for odd GPU/driver setups, e.g.
+    //   CLIPSTASH_MPV_OPTS="hwdec=no,gpu-dumb-mode=yes" clipstash
+    const QStringList extra = qEnvironmentVariable("CLIPSTASH_MPV_OPTS").split(',', Qt::SkipEmptyParts);
+    for (const QString &kv : extra) {
+        const int eq = kv.indexOf('=');
+        if (eq > 0)
+            mpv_set_option_string(m_mpv, kv.left(eq).trimmed().toUtf8().constData(),
+                                  kv.mid(eq + 1).trimmed().toUtf8().constData());
+    }
     if (mpv_initialize(m_mpv) < 0) {
         mpv_destroy(m_mpv);
         m_mpv = nullptr;
@@ -47,15 +72,29 @@ MpvWidget::MpvWidget(QWidget *parent) : QOpenGLWidget(parent)
 
 MpvWidget::~MpvWidget()
 {
-    makeCurrent();
-    if (m_gl) mpv_render_context_free(m_gl);
-    doneCurrent();
+    releaseGL();
     if (m_mpv) mpv_terminate_destroy(m_mpv);
+}
+
+void MpvWidget::releaseGL()
+{
+    if (!m_gl) return;
+    makeCurrent();
+    mpv_render_context_free(m_gl);
+    m_gl = nullptr;
+    doneCurrent();
 }
 
 void MpvWidget::initializeGL()
 {
-    if (!m_mpv || m_gl) return;
+    if (!m_mpv) return;
+    // Qt recreates the widget's GL context when the window is first switched to
+    // GL compositing (i.e. the first time the editor is shown). mpv's
+    // framebuffers die with the old context, so rebuild the render context
+    // whenever that happens instead of drawing black.
+    connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &MpvWidget::releaseGL,
+            Qt::ConnectionType(Qt::DirectConnection | Qt::UniqueConnection));
+    if (m_gl) return;
     mpv_opengl_init_params glInit{getProcAddress, nullptr};
     mpv_render_param params[] = {
         {MPV_RENDER_PARAM_API_TYPE, const_cast<char *>(MPV_RENDER_API_TYPE_OPENGL)},
@@ -77,6 +116,7 @@ void MpvWidget::initializeGL()
         return;
     }
     mpv_render_context_set_update_callback(m_gl, onUpdate, this);
+    QTimer::singleShot(0, this, [this] { update(); });
 }
 
 void MpvWidget::paintGL()
@@ -115,6 +155,8 @@ void MpvWidget::onMpvEvents()
         if (ev->event_id == MPV_EVENT_NONE) break;
         if (ev->event_id == MPV_EVENT_FILE_LOADED) {
             emit fileLoaded();
+        } else if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
+            update();
         } else if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
             auto *prop = static_cast<mpv_event_property *>(ev->data);
             const QByteArray name(prop->name);
