@@ -191,9 +191,16 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
         keys->addRow(HotkeyIds::label(id), row);
     }
     m_hotkeyStatus = muted({});
+    auto *cliHint = muted("Any compositor can also bind the command <b>clipstash --save-clip</b> "
+                          "(add <b>--seconds 30</b> for a shorter clip).");
+    // Wrapped labels collapse to a sliver inside a form layout unless they
+    // are told how wide they may get.
+    for (QLabel *l : {m_hotkeyStatus, cliHint}) {
+        l->setMinimumWidth(560);
+        l->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    }
     keys->addRow("Status", m_hotkeyStatus);
-    keys->addRow("", muted("Any compositor can also bind the command <b>clipstash --save-clip</b> "
-                           "(add <b>--seconds 30</b> for a shorter clip)."));
+    keys->addRow("", cliHint);
 
     // --- sharing
     auto *share = section(root, "Sharing",

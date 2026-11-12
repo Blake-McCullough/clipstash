@@ -449,7 +449,7 @@ void EditorPage::loadFilmstrip()
         m_timeline->setFilmstrip(QPixmap(strip));
         return;
     }
-    MediaTools::filmstrip(path, strip, m_clip.duration, 16, [this, path, strip](bool ok) {
+    MediaTools::filmstrip(path, strip, m_clip.duration, 12, [this, path, strip](bool ok) {
         if (ok && m_clip.path == path) m_timeline->setFilmstrip(QPixmap(strip));
     });
 }

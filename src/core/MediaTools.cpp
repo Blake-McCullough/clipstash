@@ -54,8 +54,9 @@ void filmstrip(const QString &path, const QString &outJpg, double duration, int 
         return;
     }
     // Only keyframes are decoded, which keeps this fast even for long 4K clips.
-    const QString vf = QString("fps=%1/%2,scale=-2:54,tile=%1x1")
-                           .arg(frames).arg(duration, 0, 'f', 3);
+    // tpad holds the last keyframe so the strip is always completely filled.
+    const QString vf = QString("tpad=stop_mode=clone:stop_duration=%3,fps=%1/%2,scale=-2:54,tile=%1x1")
+                           .arg(frames).arg(duration, 0, 'f', 3).arg(duration / frames + 4.0, 0, 'f', 2);
     ProcQueue::shared()->run("ffmpeg",
         {"-y", "-v", "error", "-skip_frame", "nokey", "-i", path, "-an", "-vf", vf,
          "-frames:v", "1", "-q:v", "5", outJpg},
