@@ -20,6 +20,8 @@ protected:
     bool filterAcceptsRow(int row, const QModelIndex &parent) const override;
 
 private:
+    void beginChange();
+    void endChange();
     QString m_query;
     int m_mode = 0;
 };

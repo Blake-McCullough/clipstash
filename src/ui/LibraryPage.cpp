@@ -20,16 +20,35 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+// Qt 6.10 replaced invalidateFilter() with a begin/end pair.
+void ClipFilter::beginChange()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+    beginFilterChange();
+#endif
+}
+
+void ClipFilter::endChange()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
+    endFilterChange();
+#else
+    invalidateFilter();
+#endif
+}
+
 void ClipFilter::setQuery(const QString &q)
 {
+    beginChange();
     m_query = q.trimmed();
-    invalidateFilter();
+    endChange();
 }
 
 void ClipFilter::setMode(int mode)
 {
+    beginChange();
     m_mode = mode;
-    invalidateFilter();
+    endChange();
 }
 
 bool ClipFilter::filterAcceptsRow(int row, const QModelIndex &) const
