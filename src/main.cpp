@@ -2,6 +2,7 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
+#include <QLoggingCategory>
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QLocalServer>
@@ -28,11 +29,16 @@ static bool sendToRunning(const QString &command)
 
 int main(int argc, char **argv)
 {
+    // Set before the application object exists so Qt's own portal
+    // registration (newer Qt versions) uses the same app ID as ours.
+    QGuiApplication::setDesktopFileName(kAppId);
+    // We register with the portal ourselves for older Qt; when Qt then tries
+    // again it logs a harmless "already associated" warning. Keep it quiet.
+    QLoggingCategory::setFilterRules(QStringLiteral("qt.qpa.services.warning=false"));
     QApplication app(argc, argv);
     QCoreApplication::setOrganizationName("clipstash");
     QCoreApplication::setApplicationName("clipstash");
     QCoreApplication::setApplicationVersion(CLIPSTASH_VERSION);
-    QGuiApplication::setDesktopFileName(kAppId);
     app.setQuitOnLastWindowClosed(false);
     std::setlocale(LC_NUMERIC, "C");
 
