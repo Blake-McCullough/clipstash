@@ -65,6 +65,8 @@ Settings Settings::load()
     flag("app/recordOnLaunch", c.recordOnLaunch);
     flag("app/closeToTray", c.closeToTray);
     flag("app/notifyOnSave", c.notifyOnSave);
+    flag("app/soundOnSave", c.soundOnSave);
+    num("app/soundVolume", c.soundVolume);
     flag("app/autostart", c.autostart);
 
     str("hotkeys/backend", c.hotkeyBackend);
@@ -126,6 +128,8 @@ void Settings::save() const
     s.setValue("app/recordOnLaunch", recordOnLaunch);
     s.setValue("app/closeToTray", closeToTray);
     s.setValue("app/notifyOnSave", notifyOnSave);
+    s.setValue("app/soundOnSave", soundOnSave);
+    s.setValue("app/soundVolume", soundVolume);
     s.setValue("app/autostart", autostart);
 
     s.setValue("hotkeys/backend", hotkeyBackend);

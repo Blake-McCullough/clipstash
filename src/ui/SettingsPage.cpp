@@ -14,6 +14,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSlider>
 #include <QSpinBox>
 #include <QStorageInfo>
 #include <QTimer>
@@ -239,7 +240,24 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_closeToTray = new QCheckBox("Keep running in the tray when the window is closed");
     m_notify = new QCheckBox("Show a notification when a clip is saved");
     m_autostart = new QCheckBox("Launch Clipstash at login (minimised to tray)");
-    for (QCheckBox *c : {m_recordOnLaunch, m_closeToTray, m_notify, m_autostart}) app->addRow(c);
+    m_sound = new QCheckBox("Play a sound when a clip is saved");
+    m_soundVolume = new QSlider(Qt::Horizontal);
+    m_soundVolume->setRange(0, 100);
+    m_soundVolume->setFixedWidth(180);
+    auto *testSound = new QPushButton("Test");
+    connect(testSound, &QPushButton::clicked, this, [this] { emit testSoundRequested(m_soundVolume->value()); });
+    connect(m_sound, &QCheckBox::toggled, m_soundVolume, &QWidget::setEnabled);
+    connect(m_sound, &QCheckBox::toggled, testSound, &QWidget::setEnabled);
+    auto *soundRow = new QHBoxLayout;
+    soundRow->setContentsMargins(0, 0, 0, 0);
+    soundRow->addWidget(m_sound);
+    soundRow->addSpacing(12);
+    soundRow->addWidget(m_soundVolume);
+    soundRow->addWidget(testSound);
+    soundRow->addStretch();
+    for (QCheckBox *c : {m_recordOnLaunch, m_closeToTray}) app->addRow(c);
+    app->addRow(soundRow);
+    for (QCheckBox *c : {m_notify, m_autostart}) app->addRow(c);
 
     root->addStretch();
 
@@ -426,6 +444,9 @@ void SettingsPage::setSettings(const Settings &s)
     m_recordOnLaunch->setChecked(s.recordOnLaunch);
     m_closeToTray->setChecked(s.closeToTray);
     m_notify->setChecked(s.notifyOnSave);
+    m_sound->setChecked(s.soundOnSave);
+    m_soundVolume->setValue(s.soundVolume);
+    m_soundVolume->setEnabled(s.soundOnSave);
     m_autostart->setChecked(s.autostart);
     updateQualityUi();
 }
@@ -476,6 +497,8 @@ Settings SettingsPage::settings() const
     s.recordOnLaunch = m_recordOnLaunch->isChecked();
     s.closeToTray = m_closeToTray->isChecked();
     s.notifyOnSave = m_notify->isChecked();
+    s.soundOnSave = m_sound->isChecked();
+    s.soundVolume = m_soundVolume->value();
     s.autostart = m_autostart->isChecked();
     return s;
 }

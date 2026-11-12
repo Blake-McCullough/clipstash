@@ -38,6 +38,7 @@ add_executable(clipstash
   src/ui/ClipDelegate.cpp src/ui/ClipDelegate.h
   src/ui/EditorPage.cpp src/ui/EditorPage.h
   src/ui/MpvWidget.cpp src/ui/MpvWidget.h
+  src/ui/ClipSound.cpp src/ui/ClipSound.h
   src/ui/Timeline.cpp src/ui/Timeline.h
   src/ui/SettingsPage.cpp src/ui/SettingsPage.h
   src/ui/HotkeyEdit.cpp src/ui/HotkeyEdit.h

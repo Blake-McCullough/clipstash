@@ -47,6 +47,8 @@ struct Settings {
     bool recordOnLaunch = true;
     bool closeToTray = true;
     bool notifyOnSave = true;
+    bool soundOnSave = true;
+    int soundVolume = 70;  // percent
     bool autostart = false;
 
     // hotkeys

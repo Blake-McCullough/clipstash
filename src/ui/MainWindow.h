@@ -1,4 +1,5 @@
 #pragma once
+#include "ui/ClipSound.h"
 #include "core/ClipJobs.h"
 #include "core/ClipLibrary.h"
 #include "core/Recorder.h"
@@ -50,6 +51,7 @@ private:
     ClipLibrary m_library;
     ClipJobs m_jobs{&m_library};
     HotkeyManager m_hotkeys;
+    ClipSound m_sound;
 
     QStackedWidget *m_stack = nullptr;
     LibraryPage *m_libraryPage = nullptr;

@@ -44,6 +44,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         for (const AudioTrackCfg &t : std::as_const(m_settings.audioTracks))
             if (!t.sources.trimmed().isEmpty()) names << t.name;
         m_library.addFile(path, names);
+        if (m_settings.soundOnSave) m_sound.play(m_settings.soundVolume);
         if (m_settings.notifyOnSave) notify("Clip saved", QFileInfo(path).fileName());
     });
     connect(&m_recorder, &Recorder::failed, this, [this](const QString &msg) {
@@ -175,6 +176,7 @@ void MainWindow::buildUi()
     connect(m_editor, &EditorPage::deleteRequested, this, [this](const QString &p) { deleteClips({p}); });
 
     connect(m_settingsPage, &SettingsPage::saveRequested, this, &MainWindow::applySettings);
+    connect(m_settingsPage, &SettingsPage::testSoundRequested, &m_sound, &ClipSound::play);
     showPage(PageLibrary);
 }
 

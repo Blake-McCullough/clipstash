@@ -7,6 +7,7 @@
 
 class HotkeyEdit;
 class QCheckBox;
+class QSlider;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -25,6 +26,7 @@ public:
 
 signals:
     void saveRequested(const Settings &s);
+    void testSoundRequested(int volumePercent);
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -76,6 +78,8 @@ private:
     QCheckBox *m_recordOnLaunch;
     QCheckBox *m_closeToTray;
     QCheckBox *m_notify;
+    QCheckBox *m_sound;
+    QSlider *m_soundVolume;
     QCheckBox *m_autostart;
     QLabel *m_saved;
 };
