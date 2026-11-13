@@ -85,6 +85,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 
     updateRecorderUi();
     if (m_settings.recordOnLaunch) m_recorder.start(m_settings);
+    setupUpdater();
 }
 
 void MainWindow::buildUi()
@@ -122,6 +123,13 @@ void MainWindow::buildUi()
         sl->addWidget(b);
     }
     sl->addStretch();
+
+    m_updateNav = new QPushButton("Update available");
+    m_updateNav->setObjectName("primary");
+    m_updateNav->setCursor(Qt::PointingHandCursor);
+    m_updateNav->hide();
+    sl->addWidget(m_updateNav);
+    sl->addSpacing(6);
 
     auto *recBox = new QFrame;
     recBox->setObjectName("panel");
@@ -386,6 +394,70 @@ void MainWindow::handleCommand(const QString &command)
     else if (cmd == "save-clip") saveClip(parts.value(1).toInt());
     else if (cmd == "toggle-recording") toggleRecorder();
     else if (cmd == "quit") quit();
+}
+
+void MainWindow::setupUpdater()
+{
+    const QString current = QString("Version %1").arg(CLIPSTASH_VERSION);
+    connect(m_updateNav, &QPushButton::clicked, this, [this] { showPage(PageSettings); });
+
+    connect(m_settingsPage, &SettingsPage::updateActionRequested, this, [this, current] {
+        if (m_updateState == UpdateState::Installed) {
+            restartApp();
+        } else if (m_updateState == UpdateState::Available) {
+            m_settingsPage->setUpdateState("Downloading…", "Download and install", false);
+            m_updater.downloadAndInstall();
+        } else {
+            m_updateCheckManual = true;
+            m_settingsPage->setUpdateState(current + " · checking…", "Check for updates", false);
+            m_updater.check();
+        }
+    });
+
+    connect(&m_updater, &Updater::checked, this, [this, current](const UpdateInfo &info) {
+        if (!info.newer) {
+            m_updateState = UpdateState::Idle;
+            m_updateNav->hide();
+            m_settingsPage->setUpdateState(current + " · up to date", "Check for updates", true);
+            return;
+        }
+        m_updateState = UpdateState::Available;
+        m_updateNav->setText(QString("Update to %1").arg(info.version));
+        m_updateNav->show();
+        m_settingsPage->setUpdateState(QString("Version %1 is available (you have %2).").arg(info.version, CLIPSTASH_VERSION),
+                                       "Download and install", true);
+        if (!m_updateCheckManual)
+            notify("Clipstash update", QString("Version %1 is available. Open Settings → Updates to install it.").arg(info.version));
+    });
+    connect(&m_updater, &Updater::progress, this, [this](const QString &stage, double fraction) {
+        const QString text = stage == "Downloading" ? QString("Downloading… %1%").arg(int(fraction * 100)) : stage + "…";
+        m_settingsPage->setUpdateState(text, "Download and install", false);
+    });
+    connect(&m_updater, &Updater::installed, this, [this](const QString &version) {
+        m_updateState = UpdateState::Installed;
+        m_updateNav->setText("Restart to update");
+        m_updateNav->show();
+        m_settingsPage->setUpdateState(QString("Version %1 is installed. Restart Clipstash to use it.").arg(version),
+                                       "Restart now", true);
+    });
+    connect(&m_updater, &Updater::failed, this, [this](const QString &message) {
+        // Keep an offered update on the table so the button retries the install.
+        const bool available = m_updateState == UpdateState::Available;
+        if (m_updateCheckManual || available)
+            m_settingsPage->setUpdateState(message, available ? "Download and install" : "Check for updates", true);
+        else
+            m_settingsPage->setUpdateState(QString("Version %1").arg(CLIPSTASH_VERSION), "Check for updates", true);
+    });
+
+    if (m_settings.checkUpdates) QTimer::singleShot(8000, &m_updater, &Updater::check);
+}
+
+void MainWindow::restartApp()
+{
+    // Start the new binary once this instance has let go of its socket.
+    const QString self = QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
+    QProcess::startDetached("/bin/sh", {"-c", "sleep 1; exec \"$0\"", self});
+    quit();
 }
 
 void MainWindow::quit()

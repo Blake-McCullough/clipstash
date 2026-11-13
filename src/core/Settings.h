@@ -50,6 +50,7 @@ struct Settings {
     bool soundOnSave = true;
     int soundVolume = 70;  // percent
     bool autostart = false;
+    bool checkUpdates = true;
 
     // hotkeys
     QString hotkeyBackend = "auto";  // auto | portal | evdev | none

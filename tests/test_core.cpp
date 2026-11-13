@@ -4,8 +4,12 @@
 #include "core/MediaTools.h"
 #include "core/Recorder.h"
 #include "core/Settings.h"
+#include "core/Updater.h"
 #include "core/Uploader.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
 #include <QSignalSpy>
 #include <QStandardPaths>
@@ -142,6 +146,27 @@ private slots:
         QCOMPARE(Settings::normalizeDir("  '/mnt/games/My Clips'  "), QString("/mnt/games/My Clips"));
         QCOMPARE(Settings::normalizeDir("file:///mnt/d/clips"), QString("/mnt/d/clips"));
         QCOMPARE(Settings::normalizeDir(""), Settings::defaultLibraryDir());
+    }
+
+    void updaterParsesRelease()
+    {
+        // Built with QJsonObject: moc on older Qt trips over "//" inside raw strings.
+        const QJsonArray assets{
+            QJsonObject{{"name", "clipstash-x86_64.sha256"}, {"browser_download_url", "https://example/sha"}},
+            QJsonObject{{"name", "clipstash-x86_64"}, {"browser_download_url", "https://example/bin"},
+                        {"digest", "sha256:ABCDEF"}}};
+        const QByteArray json = QJsonDocument(QJsonObject{{"tag_name", "v0.3.1"}, {"html_url", "https://example/r"},
+                                                          {"body", "notes"}, {"assets", assets}}).toJson();
+        const UpdateInfo info = Updater::parseRelease(json, "0.2.0");
+        QCOMPARE(info.version, QString("0.3.1"));
+        QCOMPARE(info.downloadUrl, QString("https://example/bin"));
+        QCOMPARE(info.sha256, QString("abcdef"));
+        QVERIFY(info.newer);
+        QVERIFY(!Updater::parseRelease(json, "0.3.1").newer);
+        QVERIFY(!Updater::parseRelease(json, "0.10.0").newer);  // numeric, not string, comparison
+        QVERIFY(Updater::isNewer("v0.10.0", "0.9.9"));
+        QVERIFY(!Updater::isNewer("garbage", "0.1.0"));
+        QVERIFY(!Updater::parseRelease("{}", "0.1.0").newer);
     }
 
     void needsRender()

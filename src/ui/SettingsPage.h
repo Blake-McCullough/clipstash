@@ -8,6 +8,7 @@
 class HotkeyEdit;
 class QCheckBox;
 class QSlider;
+class QPushButton;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -22,11 +23,13 @@ public:
     void setSettings(const Settings &s);
     Settings settings() const;
     void setHotkeyStatus(const QString &status);
+    void setUpdateState(const QString &status, const QString &button, bool enabled);
     void refreshDevices();
 
 signals:
     void saveRequested(const Settings &s);
     void testSoundRequested(int volumePercent);
+    void updateActionRequested();
 
 protected:
     void showEvent(QShowEvent *e) override;
@@ -82,5 +85,8 @@ private:
     QCheckBox *m_exportCompat;
     QSlider *m_soundVolume;
     QCheckBox *m_autostart;
+    QCheckBox *m_checkUpdates;
+    QLabel *m_updateStatus;
+    QPushButton *m_updateButton;
     QLabel *m_saved;
 };

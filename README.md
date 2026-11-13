@@ -78,6 +78,21 @@ clipstash --toggle-recording        # start / stop the recorder
 clipstash --minimized               # start in the tray
 ```
 
+## Updates
+
+Clipstash checks this repository's GitHub releases when it starts and shows an
+**Update** button in the sidebar when a newer version is out. **Settings → Updates** downloads
+the new build, verifies it, and replaces the installed program. If Clipstash lives in a system
+folder such as `/usr/bin`, your desktop asks for your password to do that. Then restart.
+
+Releases are built automatically: bump the version in `CMakeLists.txt`, then push a matching
+tag (`git tag v0.3.0 && git push origin v0.3.0`).
+
+## Troubleshooting
+
+`clipstash --diagnose` prints the clip folder, how many video files are in it, the recorder
+command line and which tools were found. Handy when something does not show up.
+
 ## Editor keys
 
 | Key            | Action                |
@@ -94,8 +109,10 @@ clipstash --minimized               # start in the tray
 - "Save as new clip" copies the video by default, so cuts land on the nearest keyframe
   before the start point (at most about 2 seconds early). Switch **Settings → Export → Video** to
   re-encode for frame-exact cuts.
-- H.264 is the default codec because it plays in every browser on Pixeldrain. HEVC/AV1
-  files are smaller but will not play for everyone.
+- H.264 is the default recording codec because Discord and browsers play it. If you record
+  in HEVC or AV1 (smaller files, nicer at 4K), "Save as new clip" and sharing convert the
+  clip to H.264 for you, using the GPU encoder when there is one. The original recording in
+  the clip folder stays HEVC/AV1, so send the converted clip, not the original.
 - Titles, edits and links are stored in a hidden `.clipstash` folder inside the clip folder,
   so the library survives moving the drive or reinstalling.
 - If the preview misbehaves on an unusual GPU setup, mpv options can be overridden:

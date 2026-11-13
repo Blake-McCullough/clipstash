@@ -82,6 +82,7 @@ Settings Settings::load()
     flag("app/soundOnSave", c.soundOnSave);
     num("app/soundVolume", c.soundVolume);
     flag("app/autostart", c.autostart);
+    flag("app/checkUpdates", c.checkUpdates);
 
     str("hotkeys/backend", c.hotkeyBackend);
     if (s.childGroups().contains("hotkeys")) {
@@ -146,6 +147,7 @@ void Settings::save() const
     s.setValue("app/soundOnSave", soundOnSave);
     s.setValue("app/soundVolume", soundVolume);
     s.setValue("app/autostart", autostart);
+    s.setValue("app/checkUpdates", checkUpdates);
 
     s.setValue("hotkeys/backend", hotkeyBackend);
     for (const QString &id : HotkeyIds::all()) {

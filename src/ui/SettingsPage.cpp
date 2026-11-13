@@ -262,6 +262,22 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     app->addRow(soundRow);
     for (QCheckBox *c : {m_notify, m_autostart}) app->addRow(c);
 
+    // --- updates
+    auto *upd = section(root, "Updates", "New versions are downloaded from the project's GitHub releases.");
+    m_updateStatus = muted(QString("Version %1").arg(CLIPSTASH_VERSION));
+    m_updateStatus->setMinimumWidth(560);
+    m_updateStatus->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    m_updateButton = new QPushButton("Check for updates");
+    connect(m_updateButton, &QPushButton::clicked, this, &SettingsPage::updateActionRequested);
+    auto *updRow = new QHBoxLayout;
+    updRow->setContentsMargins(0, 0, 0, 0);
+    updRow->addWidget(m_updateButton);
+    updRow->addStretch();
+    m_checkUpdates = new QCheckBox("Check for updates when Clipstash starts");
+    upd->addRow(m_updateStatus);
+    upd->addRow(updRow);
+    upd->addRow(m_checkUpdates);
+
     root->addStretch();
 
     // footer
@@ -452,6 +468,7 @@ void SettingsPage::setSettings(const Settings &s)
     m_soundVolume->setValue(s.soundVolume);
     m_soundVolume->setEnabled(s.soundOnSave);
     m_autostart->setChecked(s.autostart);
+    m_checkUpdates->setChecked(s.checkUpdates);
     updateQualityUi();
 }
 
@@ -504,7 +521,15 @@ Settings SettingsPage::settings() const
     s.soundOnSave = m_sound->isChecked();
     s.soundVolume = m_soundVolume->value();
     s.autostart = m_autostart->isChecked();
+    s.checkUpdates = m_checkUpdates->isChecked();
     return s;
+}
+
+void SettingsPage::setUpdateState(const QString &status, const QString &button, bool enabled)
+{
+    m_updateStatus->setText(status);
+    m_updateButton->setText(button);
+    m_updateButton->setEnabled(enabled);
 }
 
 void SettingsPage::setHotkeyStatus(const QString &status) { m_hotkeyStatus->setText(status); }

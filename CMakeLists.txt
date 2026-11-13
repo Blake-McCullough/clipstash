@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)
-project(clipstash VERSION 0.1.0 LANGUAGES CXX)
+project(clipstash VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,7 @@ add_library(clipstash_core STATIC
   src/core/Exporter.cpp src/core/Exporter.h
   src/core/Uploader.cpp src/core/Uploader.h
   src/core/ClipJobs.cpp src/core/ClipJobs.h
+  src/core/Updater.cpp src/core/Updater.h
 )
 target_include_directories(clipstash_core PUBLIC src)
 target_link_libraries(clipstash_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network)

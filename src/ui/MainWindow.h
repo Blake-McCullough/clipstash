@@ -1,4 +1,5 @@
 #pragma once
+#include "core/Updater.h"
 #include "ui/ClipSound.h"
 #include "core/ClipJobs.h"
 #include "core/ClipLibrary.h"
@@ -45,6 +46,8 @@ private:
     void notify(const QString &title, const QString &text);
     void writeAutostart(bool enabled);
     void showWindow();
+    void setupUpdater();
+    void restartApp();
 
     Settings m_settings;
     Recorder m_recorder;
@@ -52,6 +55,10 @@ private:
     ClipJobs m_jobs{&m_library};
     HotkeyManager m_hotkeys;
     ClipSound m_sound;
+    Updater m_updater;
+    enum class UpdateState { Idle, Available, Installed } m_updateState = UpdateState::Idle;
+    bool m_updateCheckManual = false;
+    QPushButton *m_updateNav = nullptr;
 
     QStackedWidget *m_stack = nullptr;
     LibraryPage *m_libraryPage = nullptr;

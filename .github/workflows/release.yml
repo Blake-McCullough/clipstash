@@ -1,0 +1,49 @@
+name: Release
+
+# Pushing a tag like v0.2.0 builds the app on Arch Linux and publishes a
+# GitHub release with the binary the in-app updater downloads.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install build dependencies
+        run: pacman -Syu --noconfirm --needed git cmake ninja qt6-base mpv ffmpeg github-cli
+
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the project version
+        run: |
+          version=$(sed -n 's/^project(clipstash VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match CMakeLists.txt version $version" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCLIPSTASH_TESTS=ON
+          cmake --build build
+
+      - name: Test
+        run: QT_QPA_PLATFORM=offscreen ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          strip build/clipstash
+          cp build/clipstash clipstash-x86_64
+          sha256sum clipstash-x86_64 > clipstash-x86_64.sha256
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" clipstash-x86_64 clipstash-x86_64.sha256 \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
