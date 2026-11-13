@@ -41,6 +41,7 @@ signals:
     void deleteRequested(const QStringList &paths);
     void exportRequested(const QStringList &paths);
     void convertRequested(const QStringList &paths);
+    void discordRequested(const QStringList &paths);
 
 private:
     void showContextMenu(const QPoint &pos);

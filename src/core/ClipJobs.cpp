@@ -16,7 +16,8 @@ ClipJobs::ClipJobs(ClipLibrary *library, QObject *parent) : QObject(parent), m_l
     if (!apiBase.isEmpty()) m_uploader.setApiBase(apiBase);
 
     connect(&m_exporter, &Exporter::progress, this, [this](double f) {
-        emit progress(m_clipPath, stageLabel(m_sharing ? "Preparing" : m_converting ? "Converting" : "Exporting"), f);
+        emit progress(m_clipPath, stageLabel(m_sharing ? "Preparing" : m_converting ? "Converting"
+                                             : m_discord ? "Shrinking" : "Exporting"), f);
     });
     connect(&m_exporter, &Exporter::finished, this,
             [this](bool ok, const QString &out, const QString &error) {
@@ -43,6 +44,23 @@ ClipJobs::ClipJobs(ClipLibrary *library, QObject *parent) : QObject(parent), m_l
                 c.size = QFileInfo(src).size();
             });
             emit converted(src);
+        } else if (m_discord) {
+            const qint64 limit = qint64(m_discordSettings.discordLimitMb) * 1024 * 1024;
+            const qint64 size = QFileInfo(out).size();
+            if (size > limit && m_discordAttempt < 2) {
+                // Rate control overshot (busy footage). Go again with a budget
+                // scaled by how far over it was.
+                ++m_discordAttempt;
+                QFile::remove(out);
+                const double scale = 0.93 * double(limit) / double(size);
+                emit progress(m_clipPath, stageLabel("Shrinking"), 0);
+                m_exporter.start(m_discordClip, ExportOptions::forDiscord(m_discordSettings, m_discordClip, scale), out);
+                return;
+            }
+            finish();
+            m_library->addFile(out);
+            m_library->update(out, [&](Clip &c) { c.title = title + " (Discord)"; });
+            emit discordReady(src, out);
         } else {
             finish();
             m_library->addFile(out);
@@ -73,14 +91,16 @@ ClipJobs::ClipJobs(ClipLibrary *library, QObject *parent) : QObject(parent), m_l
     });
 }
 
-QString ClipJobs::uniqueOutputPath(const QString &sourcePath)
+QString ClipJobs::uniquePath(const QString &sourcePath, const QString &suffix)
 {
     const QFileInfo fi(sourcePath);
-    const QString base = fi.absolutePath() + "/" + fi.completeBaseName() + "_edit";
+    const QString base = fi.absolutePath() + "/" + fi.completeBaseName() + suffix;
     QString out = base + ".mp4";
     for (int n = 2; QFileInfo::exists(out); ++n) out = QString("%1%2.mp4").arg(base).arg(n);
     return out;
 }
+
+QString ClipJobs::uniqueOutputPath(const QString &sourcePath) { return uniquePath(sourcePath, "_edit"); }
 
 void ClipJobs::setBusy(bool b)
 {
@@ -96,8 +116,26 @@ void ClipJobs::finish()
     m_clipPath.clear();
     m_sharing = false;
     m_converting = false;
+    m_discord = false;
     setBusy(false);
 }
+
+bool ClipJobs::discordClip(const Clip &clip, const Settings &s)
+{
+    if (m_busy) return false;
+    m_clipPath = clip.path;
+    m_title = clip.title;
+    m_discord = true;
+    m_discordAttempt = 0;
+    m_discordClip = clip;
+    m_discordSettings = s;
+    setBusy(true);
+    emit progress(m_clipPath, stageLabel("Shrinking"), 0);
+    m_exporter.start(clip, ExportOptions::forDiscord(s, clip), uniquePath(clip.path, "_discord"));
+    return true;
+}
+
+void ClipJobs::discordClips(const QStringList &paths, const Settings &s) { startBatch(paths, s, Kind::Discord); }
 
 void ClipJobs::fail(const QString &clipPath, const QString &message)
 {
@@ -163,16 +201,16 @@ bool ClipJobs::convertClip(const Clip &clip, const Settings &s)
     return true;
 }
 
-void ClipJobs::exportClips(const QStringList &paths, const Settings &s) { startBatch(paths, s, false); }
-void ClipJobs::convertClips(const QStringList &paths, const Settings &s) { startBatch(paths, s, true); }
+void ClipJobs::exportClips(const QStringList &paths, const Settings &s) { startBatch(paths, s, Kind::Export); }
+void ClipJobs::convertClips(const QStringList &paths, const Settings &s) { startBatch(paths, s, Kind::Convert); }
 
-void ClipJobs::startBatch(const QStringList &paths, const Settings &s, bool convert)
+void ClipJobs::startBatch(const QStringList &paths, const Settings &s, Kind kind)
 {
     if (m_busy || m_batch || paths.isEmpty()) return;
     m_queue = paths;
     m_batchSettings = s;
     m_batch = true;
-    m_batchConvert = convert;
+    m_batchKind = kind;
     m_batchTotal = paths.size();
     m_batchOk = m_batchFailed = 0;
     m_batchError.clear();
@@ -185,10 +223,15 @@ void ClipJobs::nextInBatch()
         const QString path = m_queue.takeFirst();
         const Clip *c = m_library->clip(path);
         if (!c) continue;  // deleted meanwhile
-        if (m_batchConvert ? convertClip(*c, m_batchSettings) : exportClip(*c, m_batchSettings)) return;
+        const Clip clip = *c;
+        const bool started = m_batchKind == Kind::Convert ? convertClip(clip, m_batchSettings)
+                           : m_batchKind == Kind::Discord ? discordClip(clip, m_batchSettings)
+                                                          : exportClip(clip, m_batchSettings);
+        if (started) return;
     }
     m_batch = false;
-    emit batchFinished(m_batchConvert ? "Converted" : "Exported", m_batchOk, m_batchFailed, m_batchError);
+    emit batchFinished(m_batchKind == Kind::Convert ? "Converted" : m_batchKind == Kind::Discord ? "Shrunk" : "Exported",
+                       m_batchOk, m_batchFailed, m_batchError);
 }
 
 bool ClipJobs::exportClip(const Clip &clip, const Settings &s)

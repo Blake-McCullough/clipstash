@@ -32,6 +32,7 @@ signals:
     void backRequested();
     void exportRequested(const QString &path);
     void shareRequested(const QString &path);
+    void discordRequested(const QString &path);
     void cancelJobRequested();
     void deleteRequested(const QString &path);
 
@@ -63,6 +64,7 @@ private:
     QLabel *m_noAudio;
     QPushButton *m_export;
     QPushButton *m_share;
+    QPushButton *m_discord;
     QPushButton *m_cancel;
     QWidget *m_linkRow;
     QLineEdit *m_link;

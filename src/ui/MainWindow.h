@@ -7,6 +7,7 @@
 #include "core/Settings.h"
 #include "hotkeys/HotkeyManager.h"
 
+#include <QTimer>
 #include <QMainWindow>
 #include <QSystemTrayIcon>
 
@@ -27,6 +28,8 @@ public:
     // toggle-recording, quit.
     void handleCommand(const QString &command);
     void quit();
+    // Start the recorder even if "record when opened" is off (used by autostart).
+    void ensureRecording();
 
 protected:
     void closeEvent(QCloseEvent *e) override;
@@ -48,6 +51,8 @@ private:
     void writeAutostart(bool enabled);
     void showWindow();
     void setupUpdater();
+    void startRecorderWhenReady();
+    void checkForNewAudioApps();
     void restartApp();
 
     Settings m_settings;
@@ -76,5 +81,8 @@ private:
     QAction *m_trayToggle = nullptr;
     QAction *m_trayClip = nullptr;
     QString m_lastNotifiedLink;
+    QTimer m_folderWait;
+    int m_folderWaitTries = 0;
+    QTimer m_appWatch;
     bool m_quitting = false;
 };

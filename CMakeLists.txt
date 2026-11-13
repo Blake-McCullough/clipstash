@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.19)
 # Changing this version on main publishes a release (see .github/workflows/release.yml).
-project(clipstash VERSION 0.2.1 LANGUAGES CXX)
+project(clipstash VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

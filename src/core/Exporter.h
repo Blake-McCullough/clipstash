@@ -13,6 +13,9 @@ struct ExportOptions {
     int audioKbps = 192;
     // Convert the file as it is: no trim, every audio track kept untouched.
     bool wholeFile = false;
+    // Size-targeted encode (Discord): constrained bitrate instead of quality.
+    int targetVideoKbps = 0;
+    int maxFps = 0;
 
     static ExportOptions fromSettings(const Settings &s);
     // Options for one clip: applies the "make it play everywhere" rule (HEVC
@@ -21,6 +24,10 @@ struct ExportOptions {
     static ExportOptions forClip(const Settings &s, const Clip &clip, bool sharing);
     // h264_nvenc on NVIDIA systems, otherwise libx264.
     static QString autoEncoder();
+    // Smallest-sensible H.264 file that fits `limitMb`: picks bitrate from the
+    // clip length, then a resolution and frame rate that bitrate can carry.
+    // `scale` shrinks the budget for a second attempt if the first overshot.
+    static ExportOptions forDiscord(const Settings &s, const Clip &clip, double scale = 1.0);
 };
 
 // Renders a clip's edit state (trim + audio mix) to a new file with ffmpeg.

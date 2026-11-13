@@ -82,6 +82,13 @@ private:
     QCheckBox *m_closeToTray;
     QCheckBox *m_notify;
     QCheckBox *m_sound;
+    QCheckBox *m_autoSplit;
+    QLabel *m_autoSplitInfo;
+    QWidget *m_autoSplitHost = nullptr;
+    QList<QWidget *> m_manualTrackWidgets;
+    QStringList m_knownApps;
+    QComboBox *m_discordLimit;
+    void updateAutoSplitUi();
     QCheckBox *m_exportCompat;
     QSlider *m_soundVolume;
     QCheckBox *m_autostart;

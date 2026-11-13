@@ -2,6 +2,7 @@
 #include <QList>
 #include <QMap>
 #include <QString>
+#include <QStringList>
 
 struct AudioTrackCfg {
     QString name;
@@ -42,6 +43,12 @@ struct Settings {
     bool restorePortalSession = true;
     QString extraArgs;
     QList<AudioTrackCfg> audioTracks;
+    // Auto split: every app that has played audio gets its own track.
+    bool autoSplitAudio = false;
+    QStringList knownApps;
+    // The tracks actually recorded: the manual list, or the generated one.
+    QList<AudioTrackCfg> effectiveTracks() const;
+    static QList<AudioTrackCfg> autoSplitTracks(const QStringList &apps);
 
     // behaviour
     bool recordOnLaunch = true;
@@ -59,6 +66,7 @@ struct Settings {
     // sharing
     QString pixeldrainKey;
     bool copyLinkAfterUpload = true;
+    int discordLimitMb = 10;
 
     // export
     QString exportVideoMode = "copy";  // copy | reencode

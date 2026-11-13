@@ -126,6 +126,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     auto *cap = section(root, "Capture", "gpu-screen-recorder keeps the last moments in memory; nothing is written until you clip.");
     m_source = new QComboBox;
     m_source->setEditable(true);
+    m_source->setMinimumWidth(420);  // monitor entries read like "DP-6 · 3840x2160"
     cap->addRow("Source", m_source);
     m_replay = spin(5, 1200, " s");
     cap->addRow("Replay length", m_replay);
@@ -159,6 +160,29 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     auto *audio = section(root, "Audio tracks",
         "Each track is recorded separately, so you can mute or rebalance it per clip in the editor. "
         "Join sources with | to merge them into one track.");
+    m_autoSplit = new QCheckBox("Auto split: give every app that plays audio its own track");
+    m_autoSplit->setToolTip("Clipstash watches which apps play sound and records each on its own track,\n"
+                            "plus one track for everything else and one for your microphone.\n"
+                            "The first time a new app is noticed the replay buffer restarts once.");
+    audio->addRow(m_autoSplit);
+    m_autoSplitInfo = muted({});
+    m_autoSplitInfo->setMinimumWidth(560);
+    m_autoSplitInfo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    auto *forget = new QPushButton("Forget apps");
+    forget->setToolTip("Clear the list of apps that get their own track.");
+    auto *autoRow = new QHBoxLayout;
+    autoRow->setContentsMargins(0, 0, 0, 0);
+    autoRow->addWidget(m_autoSplitInfo, 1);
+    autoRow->addWidget(forget);
+    auto *autoHost = new QWidget;
+    autoHost->setStyleSheet("background: transparent;");
+    autoHost->setLayout(autoRow);
+    audio->addRow(autoHost);
+    connect(forget, &QPushButton::clicked, this, [this] {
+        m_knownApps.clear();
+        updateAutoSplitUi();
+    });
+
     auto *trackHost = new QWidget;
     trackHost->setStyleSheet("background: transparent;");
     m_trackLayout = new QVBoxLayout(trackHost);
@@ -177,6 +201,9 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     connect(addTrack, &QPushButton::clicked, this,
             [this] { addTrackRow({QString("Track %1").arg(m_tracks.size() + 1), ""}); });
     connect(split, &QPushButton::clicked, this, [this, split] { showSplitMenu(split); });
+    m_manualTrackWidgets = {trackHost, addTrack, split};
+    m_autoSplitHost = autoHost;
+    connect(m_autoSplit, &QCheckBox::toggled, this, &SettingsPage::updateAutoSplitUi);
 
     // --- hotkeys
     auto *keys = section(root, "Hotkeys", "Click a box and press the combination. Backspace clears it.");
@@ -213,6 +240,11 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     share->addRow("API key", m_pixeldrainKey);
     m_copyLink = new QCheckBox("Copy the link to the clipboard when an upload finishes");
     share->addRow("", m_copyLink);
+    m_discordLimit = combo({{"10 MB (always safe)", "10"}, {"20 MB (free accounts)", "20"},
+                            {"50 MB (Nitro Basic)", "50"}, {"100 MB (boosted servers)", "100"},
+                            {"500 MB (Nitro)", "500"}});
+    m_discordLimit->setToolTip("“Export for Discord” shrinks a clip to fit under this size.");
+    share->addRow("Discord size limit", m_discordLimit);
 
     // --- export
     auto *exp = section(root, "Export", "Used by “Save as new clip” and when sharing.");
@@ -239,10 +271,10 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
 
     // --- app
     auto *app = section(root, "App");
-    m_recordOnLaunch = new QCheckBox("Start the recorder when Clipstash opens");
+    m_recordOnLaunch = new QCheckBox("Start recording as soon as Clipstash opens");
     m_closeToTray = new QCheckBox("Keep running in the tray when the window is closed");
     m_notify = new QCheckBox("Show a notification when a clip is saved");
-    m_autostart = new QCheckBox("Launch Clipstash at login (minimised to tray)");
+    m_autostart = new QCheckBox("Start with the computer: launch at login in the tray, with the recorder running");
     m_sound = new QCheckBox("Play a sound when a clip is saved");
     m_soundVolume = new QSlider(Qt::Horizontal);
     m_soundVolume->setRange(0, 100);
@@ -443,6 +475,10 @@ void SettingsPage::setSettings(const Settings &s)
     for (const TrackRow &row : std::as_const(m_tracks)) row.widget->deleteLater();
     m_tracks.clear();
     for (const AudioTrackCfg &t : s.audioTracks) addTrackRow(t);
+    m_knownApps = s.knownApps;
+    m_autoSplit->setChecked(s.autoSplitAudio);
+    updateAutoSplitUi();
+    selectData(m_discordLimit, QString::number(s.discordLimitMb));
 
     selectData(m_hotkeyBackend, s.hotkeyBackend);
     for (auto it = m_hotkeys.cbegin(); it != m_hotkeys.cend(); ++it)
@@ -493,6 +529,9 @@ Settings SettingsPage::settings() const
     s.restorePortalSession = m_restorePortal->isChecked();
     s.extraArgs = m_extraArgs->text().trimmed();
 
+    s.autoSplitAudio = m_autoSplit->isChecked();
+    s.knownApps = m_knownApps;
+    s.discordLimitMb = m_discordLimit->currentData().toString().toInt();
     s.audioTracks.clear();
     for (const TrackRow &row : m_tracks) {
         const QString src = row.sources->text().trimmed();
@@ -523,6 +562,16 @@ Settings SettingsPage::settings() const
     s.autostart = m_autostart->isChecked();
     s.checkUpdates = m_checkUpdates->isChecked();
     return s;
+}
+
+void SettingsPage::updateAutoSplitUi()
+{
+    const bool on = m_autoSplit->isChecked();
+    for (QWidget *w : std::as_const(m_manualTrackWidgets)) w->setVisible(!on);
+    m_autoSplitHost->setVisible(on);
+    m_autoSplitInfo->setText(m_knownApps.isEmpty()
+        ? "No apps noticed yet. They are added as they play sound while the recorder runs."
+        : "Own track: " + m_knownApps.join(", ") + ". Plus “Other audio” and “Microphone”.");
 }
 
 void SettingsPage::setUpdateState(const QString &status, const QString &button, bool enabled)

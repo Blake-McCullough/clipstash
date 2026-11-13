@@ -109,7 +109,8 @@ int main(int argc, char **argv)
     QCommandLineOption minimized("minimized", "Start hidden in the system tray.");
     QCommandLineOption quit("quit", "Quit the running instance.");
     QCommandLineOption diag("diagnose", "Print a troubleshooting report and exit.");
-    parser.addOptions({saveClip, seconds, toggle, minimized, quit, diag});
+    QCommandLineOption record("record", "Start the recorder straight away.");
+    parser.addOptions({saveClip, seconds, toggle, minimized, quit, diag, record});
     parser.process(app);
     if (parser.isSet(diag)) return diagnose();
 
@@ -144,6 +145,7 @@ int main(int argc, char **argv)
         }
     });
 
+    if (parser.isSet(record)) window.ensureRecording();
     if (!parser.isSet(minimized)) window.show();
     return app.exec();
 }

@@ -170,6 +170,79 @@ private slots:
         QVERIFY(!Updater::parseRelease("{}", "0.1.0").newer);
     }
 
+    void autoSplitTracks()
+    {
+        Settings s = baseSettings();
+        s.autoSplitAudio = true;
+        QCOMPARE(s.effectiveTracks().size(), 2);  // nothing seen yet: desktop + mic
+        s.knownApps = {"spotify", "Discord"};
+        const auto t = s.effectiveTracks();
+        QCOMPARE(t.size(), 4);
+        QCOMPARE(t[0].sources, QString("app-inverse:spotify|app-inverse:Discord"));
+        QCOMPARE(t[1].sources, QString("app:spotify"));
+        QCOMPARE(t[2].name, QString("Discord"));
+        QCOMPARE(t[3].sources, QString("default_input"));
+        Settings before = s;
+        s.knownApps << "firefox";
+        QVERIFY(s.recorderConfigDiffers(before));  // a new app means a recorder restart
+        QVERIFY(Recorder::buildArgs(s).contains("app:firefox"));
+    }
+
+    void discordBudget()
+    {
+        Settings s = baseSettings();
+        s.exportEncoder = "libx264";
+        s.discordLimitMb = 10;
+        Clip c = threeTrackClip();
+        c.duration = 60;
+        ExportOptions o = ExportOptions::forDiscord(s, c);
+        // 10 MB over 60 s is ~1.3 Mbit/s in total: 720p30 territory
+        QVERIFY2(o.targetVideoKbps > 900 && o.targetVideoKbps < 1300, qPrintable(QString::number(o.targetVideoKbps)));
+        QCOMPARE(o.maxHeight, 720);
+        QCOMPARE(o.maxFps, 30);
+        const QStringList a = Exporter::buildArgs(c, o, "/o.mp4");
+        QVERIFY(a.contains("-maxrate"));
+        QCOMPARE(a.value(a.indexOf("-b:a") + 1), QString("96k"));
+        c.duration = 8;  // short clip: plenty of budget, but capped
+        o = ExportOptions::forDiscord(s, c);
+        QCOMPARE(o.maxHeight, 1440);
+        QVERIFY(o.targetVideoKbps <= 20000);
+        s.discordLimitMb = 500;
+        c.duration = 60;
+        QVERIFY(ExportOptions::forDiscord(s, c).targetVideoKbps <= 20000);
+    }
+
+    // The real thing: a noisy 20 s clip must come out under the limit.
+    void discordFitsLimit()
+    {
+        if (!haveFfmpeg()) QSKIP("ffmpeg not installed");
+        QTemporaryDir dir;
+        const QString src = dir.filePath("Replay_big.mp4");
+        QCOMPARE(QProcess::execute("ffmpeg", {"-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=60:duration=20",
+            "-f", "lavfi", "-i", "anoisesrc=duration=20:amplitude=0.3",
+            "-vf", "noise=alls=40:allf=t", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", src}), 0);
+        QVERIFY(QFileInfo(src).size() > 4 * 1024 * 1024);
+
+        ClipLibrary lib;
+        lib.setDirectory(dir.path());
+        QTRY_VERIFY_WITH_TIMEOUT(lib.rowCount() == 1 && lib.clipAt(0).probed, 15000);
+        Settings s;
+        s.exportEncoder = "libx264";
+        s.discordLimitMb = 2;
+        ClipJobs jobs(&lib);
+        QSignalSpy ready(&jobs, &ClipJobs::discordReady);
+        QSignalSpy failed(&jobs, &ClipJobs::failed);
+        QVERIFY(jobs.discordClip(lib.clipAt(0), s));
+        QVERIFY2(ready.wait(120000), failed.isEmpty() ? "timeout" : qPrintable(failed[0][1].toString()));
+        const QString out = ready[0][1].toString();
+        QVERIFY(out.endsWith("_discord.mp4"));
+        const qint64 size = QFileInfo(out).size();
+        QVERIFY2(size <= 2 * 1024 * 1024, qPrintable(QString::number(size)));
+        QVERIFY2(size > 1024 * 1024, qPrintable(QString::number(size)));  // and it used the budget
+    }
+
     void needsRender()
     {
         Clip c = threeTrackClip();

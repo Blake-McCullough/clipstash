@@ -133,6 +133,10 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     m_export = new QPushButton("Save as new clip");
     m_export->setToolTip("Write the trimmed, mixed version as a new file. The original is kept.");
     sl->addWidget(m_export);
+    m_discord = new QPushButton("Export for Discord");
+    m_discord->setToolTip("Make a small H.264 copy that fits Discord's upload limit\n"
+                          "(set the limit in Settings → Sharing). Trim and audio mix are applied.");
+    sl->addWidget(m_discord);
 
     sl->addSpacing(8);
     sl->addWidget(heading("Share"));
@@ -239,6 +243,10 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     connect(m_export, &QPushButton::clicked, this, [this] {
         commit();
         emit exportRequested(m_clip.path);
+    });
+    connect(m_discord, &QPushButton::clicked, this, [this] {
+        commit();
+        emit discordRequested(m_clip.path);
     });
     connect(m_share, &QPushButton::clicked, this, [this] {
         commit();
@@ -458,6 +466,7 @@ void EditorPage::setJobProgress(const QString &path, const QString &stage, doubl
 {
     m_export->setEnabled(false);
     m_share->setEnabled(false);
+    m_discord->setEnabled(false);
     if (path != m_clip.path) return;
     m_progress->show();
     m_cancel->show();
@@ -470,6 +479,7 @@ void EditorPage::setJobIdle(const QString &message, bool error)
 {
     m_export->setEnabled(true);
     m_share->setEnabled(true);
+    m_discord->setEnabled(true);
     m_progress->hide();
     m_cancel->hide();
     m_status->setStyleSheet(error ? "color: #ff5c6c;" : "");

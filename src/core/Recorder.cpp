@@ -4,6 +4,7 @@
 #include <QFileInfo>
 
 #include <csignal>
+#include <sys/prctl.h>
 
 Recorder::Recorder(QObject *parent) : QObject(parent)
 {
@@ -47,7 +48,8 @@ QStringList Recorder::buildArgs(const Settings &s)
     if (!s.resolution.trimmed().isEmpty()) a << "-s" << s.resolution.trimmed();
     if (s.captureSource == "portal")
         a << "-restore-portal-session" << (s.restorePortalSession ? "yes" : "no");
-    for (const AudioTrackCfg &t : s.audioTracks) {
+    const QList<AudioTrackCfg> tracks = s.effectiveTracks();
+    for (const AudioTrackCfg &t : tracks) {
         const QString src = t.sources.trimmed();
         if (!src.isEmpty()) a << "-a" << src;
     }
@@ -99,6 +101,9 @@ void Recorder::start(const Settings &s)
         emit failed(m_lastError);
     });
 
+    // If Clipstash is killed or crashes, take the recorder down with it
+    // instead of leaving an orphan capturing in the background.
+    m_proc->setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGTERM); });
     setState(State::Starting);
     m_proc->start(s.recorderBinary, buildArgs(s));
     m_runningTimer.start();

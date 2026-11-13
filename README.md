@@ -59,6 +59,23 @@ currently playing audio. In the editor, untick a track (or drag its slider) and 
 the clip is exported and shared. The original file keeps every track, so you can change your
 mind later. Per-app capture needs PipeWire, which CachyOS uses by default.
 
+**Auto split** (tick box at the top of *Audio tracks*) does this for you: Clipstash watches
+which apps play sound and gives each one its own track, plus "Other audio" for everything
+else and "Microphone". Apps are remembered, so the next session starts with their tracks
+already in place. The first time a new app is noticed the replay buffer restarts once.
+
+### Sharing on Discord
+
+**Export for Discord** (editor button, or right-click in the library) makes a small H.264 copy
+that fits under Discord's upload limit and puts the file on the clipboard, so Ctrl+V in
+Discord attaches it. Resolution and frame rate are chosen from the clip length and the limit
+set in **Settings → Sharing** (10 MB by default; raise it if your account allows more).
+
+### Start with the computer
+
+**Settings → App → Start with the computer** launches Clipstash in the tray at login with the
+recorder running. If the clip folder is on a drive that mounts a little later, it waits for it.
+
 ### Hotkeys
 
 Set the keys under **Settings → Hotkeys**. The default is **Alt+F10**. Three methods:

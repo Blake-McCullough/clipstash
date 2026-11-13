@@ -5,6 +5,8 @@
 #include "ui/SettingsPage.h"
 #include "ui/Theme.h"
 
+#include <QMimeData>
+#include "core/MediaTools.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -41,7 +43,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(&m_recorder, &Recorder::stateChanged, this, &MainWindow::updateRecorderUi);
     connect(&m_recorder, &Recorder::clipSaved, this, [this](const QString &path) {
         QStringList names;
-        for (const AudioTrackCfg &t : std::as_const(m_settings.audioTracks))
+        const QList<AudioTrackCfg> tracks = m_settings.effectiveTracks();
+        for (const AudioTrackCfg &t : tracks)
             if (!t.sources.trimmed().isEmpty()) names << t.name;
         m_library.addFile(path, names);
         if (m_settings.soundOnSave) m_sound.play(m_settings.soundVolume);
@@ -80,6 +83,18 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         m_libraryPage->clearJobProgress();
         m_editor->setJobIdle("Converted to H.264.");
     });
+    connect(&m_jobs, &ClipJobs::discordReady, this, [this](const QString &, const QString &out) {
+        m_libraryPage->clearJobProgress();
+        // Put the file itself on the clipboard: Ctrl+V in Discord attaches it.
+        auto *mime = new QMimeData;
+        mime->setUrls({QUrl::fromLocalFile(out)});
+        mime->setText(out);
+        QApplication::clipboard()->setMimeData(mime);
+        const QString text = QString("%1 (%2) is ready and copied. Paste it into Discord with Ctrl+V.")
+                                 .arg(QFileInfo(out).fileName(), formatSize(QFileInfo(out).size()));
+        m_editor->setJobIdle(text);
+        notify("Discord version ready", text);
+    });
     connect(&m_jobs, &ClipJobs::batchFinished, this,
             [this](const QString &what, int ok, int failed, const QString &lastError) {
         m_libraryPage->clearJobProgress();
@@ -97,8 +112,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     });
 
     updateRecorderUi();
-    if (m_settings.recordOnLaunch) m_recorder.start(m_settings);
+    if (m_settings.recordOnLaunch) startRecorderWhenReady();
+    if (m_settings.autostart) writeAutostart(true);  // keep the entry current across updates
     setupUpdater();
+
+    // Auto split: notice apps that start playing sound and give them a track.
+    m_appWatch.setInterval(10000);
+    connect(&m_appWatch, &QTimer::timeout, this, &MainWindow::checkForNewAudioApps);
+    m_appWatch.start();
 }
 
 void MainWindow::buildUi()
@@ -201,6 +222,15 @@ void MainWindow::buildUi()
     connect(m_editor, &EditorPage::backRequested, this, [this] { showPage(PageLibrary); });
     connect(m_editor, &EditorPage::shareRequested, this, &MainWindow::shareClip);
     connect(m_editor, &EditorPage::exportRequested, this, &MainWindow::exportClip);
+    auto discord = [this](const QStringList &paths) {
+        if (m_jobs.busy()) {
+            m_editor->setJobIdle("Another export or upload is still running.", true);
+            return;
+        }
+        m_jobs.discordClips(paths, m_settings);
+    };
+    connect(m_editor, &EditorPage::discordRequested, this, [discord](const QString &path) { discord({path}); });
+    connect(m_libraryPage, &LibraryPage::discordRequested, this, discord);
     connect(m_editor, &EditorPage::cancelJobRequested, &m_jobs, &ClipJobs::cancel);
     connect(m_editor, &EditorPage::deleteRequested, this, [this](const QString &p) { deleteClips({p}); });
 
@@ -268,8 +298,67 @@ void MainWindow::saveClip(int seconds)
 
 void MainWindow::toggleRecorder()
 {
+    m_folderWait.stop();
     if (m_recorder.isActive()) m_recorder.stop();
     else m_recorder.start(m_settings);
+}
+
+void MainWindow::startRecorderWhenReady()
+{
+    // At login a clip folder on another drive may not be mounted yet. Starting
+    // the recorder then would fail, so wait for the folder to show up.
+    if (QFileInfo(m_settings.libraryDir).isDir() || QDir().mkpath(m_settings.libraryDir)) {
+        m_folderWait.stop();
+        if (m_library.rowCount() == 0) m_library.setDirectory(m_settings.libraryDir);
+        if (!m_recorder.isActive()) m_recorder.start(m_settings);
+        return;
+    }
+    if (m_folderWait.isActive()) return;
+    m_folderWaitTries = 0;
+    m_folderWait.setInterval(3000);
+    m_folderWait.disconnect(this);
+    connect(&m_folderWait, &QTimer::timeout, this, [this] {
+        if (++m_folderWaitTries > 200) {  // ten minutes
+            m_folderWait.stop();
+            notify("Clipstash", "The clip folder never appeared, so the recorder was not started.");
+            return;
+        }
+        startRecorderWhenReady();
+    });
+    m_folderWait.start();
+    m_recText->setText("Waiting for clip folder…");
+    m_recDetail->setText(m_settings.libraryDir + " is not available yet.");
+}
+
+void MainWindow::ensureRecording()
+{
+    if (!m_recorder.isActive()) startRecorderWhenReady();
+}
+
+void MainWindow::checkForNewAudioApps()
+{
+    if (!m_settings.autoSplitAudio || m_recorder.state() != Recorder::State::Running) return;
+    MediaTools::gsrList(m_settings.recorderBinary, "--list-application-audio",
+                        [this](const MediaTools::NamedList &apps) {
+        if (!m_settings.autoSplitAudio) return;
+        QStringList added;
+        for (const auto &entry : apps) {
+            const QString name = entry.first.trimmed();
+            // Our own chime and the recorder are not interesting.
+            if (name.isEmpty() || name.compare("Clipstash", Qt::CaseInsensitive) == 0
+                || name.contains("gpu-screen-recorder", Qt::CaseInsensitive) || name.contains('|'))
+                continue;
+            if (m_settings.knownApps.contains(name, Qt::CaseInsensitive)) continue;
+            if (m_settings.knownApps.size() >= 12) break;  // keep clips to a sane number of tracks
+            m_settings.knownApps << name;
+            added << name;
+        }
+        if (added.isEmpty()) return;
+        m_settings.save();
+        m_settingsPage->setSettings(m_settings);
+        if (m_recorder.isActive()) m_recorder.restart(m_settings);
+        updateRecorderUi();
+    });
 }
 
 void MainWindow::updateRecorderUi()
@@ -283,8 +372,8 @@ void MainWindow::updateRecorderUi()
         dot = Theme::Bad;
         text = "Recording";
         detail = QString("Keeping the last %1 · %2 audio track%3")
-                     .arg(formatDuration(m_settings.replaySeconds)).arg(m_settings.audioTracks.size())
-                     .arg(m_settings.audioTracks.size() == 1 ? "" : "s");
+                     .arg(formatDuration(m_settings.replaySeconds)).arg(m_settings.effectiveTracks().size())
+                     .arg(m_settings.effectiveTracks().size() == 1 ? "" : "s");
         break;
     case S::Starting:
         dot = Theme::Warn;
@@ -420,7 +509,7 @@ void MainWindow::writeAutostart(bool enabled)
     QDir().mkpath(dir);
     QFile f(file);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    f.write(QString("[Desktop Entry]\nType=Application\nName=Clipstash\nExec=\"%1\" --minimized\n"
+    f.write(QString("[Desktop Entry]\nType=Application\nName=Clipstash\nExec=\"%1\" --minimized --record\n"
                     "Icon=io.github.blake_mccullough.clipstash\nX-GNOME-Autostart-enabled=true\n")
                 .arg(QCoreApplication::applicationFilePath()).toUtf8());
 }

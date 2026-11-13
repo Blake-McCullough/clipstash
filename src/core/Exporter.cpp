@@ -18,6 +18,44 @@ QString ExportOptions::autoEncoder()
     return QFile::exists("/proc/driver/nvidia/version") ? "h264_nvenc" : "libx264";
 }
 
+ExportOptions ExportOptions::forDiscord(const Settings &s, const Clip &clip, double scale)
+{
+    ExportOptions o = fromSettings(s);
+    o.reencodeVideo = true;
+    if (o.encoder == "auto") o.encoder = autoEncoder();
+    o.audioKbps = 96;
+
+    bool hasAudio = clip.tracks.isEmpty();
+    for (const ClipTrack &t : clip.tracks) hasAudio |= t.enabled && t.volume > 0.001;
+
+    const double seconds = qMax(1.0, clip.editedDuration());
+    // 6% headroom for the container and rate-control overshoot.
+    const double totalKbps = s.discordLimitMb * 8.0 * 1024 * 0.94 / seconds * scale;
+    int video = int(totalKbps) - (hasAudio ? o.audioKbps : 0);
+    // Never spend more than the source is worth: a clip that is already small
+    // should not grow. Allow double, since H.264 needs more bits than HEVC/AV1.
+    if (clip.size > 0 && clip.duration > 0)
+        video = qMin(video, int(clip.size * 8.0 / 1024 / clip.duration * 2));
+
+    struct Step { int minKbps, height, fps, capKbps; };
+    static const Step ladder[] = {
+        {9000, 1440, 60, 20000}, {4500, 1080, 60, 12000}, {2200, 720, 60, 6000},
+        {1100, 720, 30, 3500},   {550, 480, 30, 1800},    {0, 360, 30, 900},
+    };
+    Step pick = ladder[5];
+    for (const Step &st : ladder) {
+        if (video >= st.minKbps) {
+            pick = st;
+            break;
+        }
+    }
+    o.maxHeight = pick.height;
+    o.maxFps = pick.fps;
+    // No point spending the whole allowance on a short clip.
+    o.targetVideoKbps = qBound(120, video, pick.capKbps);
+    return o;
+}
+
 ExportOptions ExportOptions::forClip(const Settings &s, const Clip &clip, bool sharing)
 {
     ExportOptions o = fromSettings(s);
@@ -47,12 +85,16 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
     for (int i = 0; i < clip.tracks.size(); ++i)
         if (clip.tracks[i].enabled && clip.tracks[i].volume > 0.001) enabled << i;
 
-    if (clip.tracks.isEmpty() || o.wholeFile) {
+    if (clip.tracks.isEmpty() && o.targetVideoKbps > 0) {
+        a << "-map" << "0:a:0?" << "-c:a" << "aac" << "-b:a" << QString("%1k").arg(o.audioKbps);
+    } else if (clip.tracks.isEmpty() || o.wholeFile) {
         a << "-map" << "0:a?" << "-c:a" << "copy";
     } else if (enabled.isEmpty()) {
         a << "-an";
     } else if (enabled.size() == 1 && qAbs(clip.tracks[enabled[0]].volume - 1.0) < 0.01) {
-        a << "-map" << QString("0:a:%1").arg(enabled[0]) << "-c:a" << "copy";
+        a << "-map" << QString("0:a:%1").arg(enabled[0]);
+        if (o.targetVideoKbps > 0) a << "-c:a" << "aac" << "-b:a" << QString("%1k").arg(o.audioKbps);
+        else a << "-c:a" << "copy";
     } else {
         QStringList chains;
         QString inputs;
@@ -75,11 +117,24 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
         a << "-c:v" << "copy";
     } else {
         QStringList vf;
+        if (o.maxFps > 0) vf << QString("fps='min(source_fps,%1)'").arg(o.maxFps);
         if (o.maxHeight > 0) vf << QString("scale=-2:'min(ih,%1)'").arg(o.maxHeight);
         if (vaapi) vf << "format=nv12" << "hwupload";
         if (!vf.isEmpty()) a << "-vf" << vf.join(',');
         const QString q = QString::number(o.quality);
-        if (o.encoder == "h264_nvenc")
+        if (o.targetVideoKbps > 0) {
+            // Constrained bitrate so the file lands under a size limit.
+            const QString rate = QString("%1k").arg(o.targetVideoKbps);
+            const QString buf = QString("%1k").arg(o.targetVideoKbps * 2);
+            if (o.encoder == "h264_nvenc")
+                a << "-c:v" << "h264_nvenc" << "-preset" << "p6" << "-rc" << "vbr" << "-b:v" << rate
+                  << "-maxrate" << rate << "-bufsize" << buf << "-pix_fmt" << "yuv420p";
+            else if (vaapi)
+                a << "-c:v" << "h264_vaapi" << "-b:v" << rate << "-maxrate" << rate << "-bufsize" << buf;
+            else
+                a << "-c:v" << "libx264" << "-preset" << "medium" << "-b:v" << rate << "-maxrate" << rate
+                  << "-bufsize" << buf << "-pix_fmt" << "yuv420p";
+        } else if (o.encoder == "h264_nvenc")
             a << "-c:v" << "h264_nvenc" << "-preset" << "p5" << "-rc" << "vbr" << "-cq" << q << "-b:v" << "0"
               << "-pix_fmt" << "yuv420p";
         else if (vaapi)

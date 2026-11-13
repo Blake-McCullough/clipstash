@@ -37,6 +37,22 @@ QString Settings::normalizeDir(const QString &dir)
     return QDir::cleanPath(QDir(d).absolutePath());
 }
 
+QList<AudioTrackCfg> Settings::autoSplitTracks(const QStringList &apps)
+{
+    if (apps.isEmpty()) return {{"Desktop", "default_output"}, {"Microphone", "default_input"}};
+    QStringList inverse;
+    for (const QString &a : apps) inverse << "app-inverse:" + a;
+    QList<AudioTrackCfg> tracks{{"Other audio", inverse.join('|')}};
+    for (const QString &a : apps) tracks.append(AudioTrackCfg{a, "app:" + a});
+    tracks.append(AudioTrackCfg{"Microphone", "default_input"});
+    return tracks;
+}
+
+QList<AudioTrackCfg> Settings::effectiveTracks() const
+{
+    return autoSplitAudio ? autoSplitTracks(knownApps) : audioTracks;
+}
+
 Settings Settings::load()
 {
     QSettings s;
@@ -76,6 +92,9 @@ Settings Settings::load()
         c.audioTracks = {{"Desktop", "default_output"}, {"Microphone", "default_input"}};
     }
 
+    flag("recorder/autoSplitAudio", c.autoSplitAudio);
+    c.knownApps = s.value("recorder/knownApps").toStringList();
+
     flag("app/recordOnLaunch", c.recordOnLaunch);
     flag("app/closeToTray", c.closeToTray);
     flag("app/notifyOnSave", c.notifyOnSave);
@@ -101,6 +120,7 @@ Settings Settings::load()
 
     str("share/pixeldrainKey", c.pixeldrainKey);
     flag("share/copyLink", c.copyLinkAfterUpload);
+    num("share/discordLimitMb", c.discordLimitMb);
 
     str("export/videoMode", c.exportVideoMode);
     str("export/videoEncoder", c.exportEncoder);
@@ -141,6 +161,9 @@ void Settings::save() const
     }
     s.endArray();
 
+    s.setValue("recorder/autoSplitAudio", autoSplitAudio);
+    s.setValue("recorder/knownApps", knownApps);
+
     s.setValue("app/recordOnLaunch", recordOnLaunch);
     s.setValue("app/closeToTray", closeToTray);
     s.setValue("app/notifyOnSave", notifyOnSave);
@@ -159,6 +182,7 @@ void Settings::save() const
 
     s.setValue("share/pixeldrainKey", pixeldrainKey);
     s.setValue("share/copyLink", copyLinkAfterUpload);
+    s.setValue("share/discordLimitMb", discordLimitMb);
 
     s.setValue("export/videoMode", exportVideoMode);
     s.setValue("export/videoEncoder", exportEncoder);
@@ -179,5 +203,5 @@ bool Settings::recorderConfigDiffers(const Settings &o) const
         || resolution != o.resolution || frameMode != o.frameMode
         || replayStorage != o.replayStorage || recordCursor != o.recordCursor
         || restorePortalSession != o.restorePortalSession || extraArgs != o.extraArgs
-        || audioTracks != o.audioTracks;
+        || effectiveTracks() != o.effectiveTracks();
 }

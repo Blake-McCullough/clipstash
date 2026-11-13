@@ -25,6 +25,9 @@ public:
     // Re-encode the file itself to H.264 in place (same name, date, tracks and
     // edit state), as if it had been recorded that way.
     bool convertClip(const Clip &clip, const Settings &s);
+    // Small H.264 copy sized to fit Discord's upload limit (trim and mix applied).
+    bool discordClip(const Clip &clip, const Settings &s);
+    void discordClips(const QStringList &paths, const Settings &s);
     // Run exportClip / convertClip over several clips, one after another.
     void exportClips(const QStringList &paths, const Settings &s);
     void convertClips(const QStringList &paths, const Settings &s);
@@ -39,6 +42,7 @@ signals:
     void shared(const QString &clipPath, const QString &url);
     void failed(const QString &clipPath, const QString &message);
     void converted(const QString &clipPath);
+    void discordReady(const QString &clipPath, const QString &outPath);
     // A multi-clip run ended. `what` is "Exported" or "Converted".
     void batchFinished(const QString &what, int succeeded, int failed, const QString &lastError);
 
@@ -47,7 +51,9 @@ private:
     void startUpload(const QString &file);
     void finish();
     void fail(const QString &path, const QString &message);
-    void startBatch(const QStringList &paths, const Settings &s, bool convert);
+    enum class Kind { Export, Convert, Discord };
+    void startBatch(const QStringList &paths, const Settings &s, Kind kind);
+    static QString uniquePath(const QString &sourcePath, const QString &suffix);
     void nextInBatch();
     QString stageLabel(const QString &base) const;
     bool replaceOriginal(const QString &rendered, const QString &original, QString *error);
@@ -62,7 +68,11 @@ private:
     QStringList m_queue;
     Settings m_batchSettings;
     bool m_batch = false;
-    bool m_batchConvert = false;
+    Kind m_batchKind = Kind::Export;
+    bool m_discord = false;
+    int m_discordAttempt = 0;
+    Clip m_discordClip;
+    Settings m_discordSettings;
     int m_batchTotal = 0;
     int m_batchOk = 0;
     int m_batchFailed = 0;

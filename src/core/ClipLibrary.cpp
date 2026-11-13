@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QLocale>
+#include <QPointer>
 #include <QSaveFile>
 
 static const QStringList kExtensions = {"mp4", "mkv", "webm", "mov", "m4v", "avi", "ts", "flv"};
@@ -202,7 +203,9 @@ void ClipLibrary::ensureMedia(const QString &path)
     if ((!c->probed || c->videoCodec.isEmpty()) && !m_probing.contains(path) && m_probeAttempts.value(path) < 3) {
         m_probing.insert(path);
         ++m_probeAttempts[path];
-        MediaTools::probe(path, [this, path](const ProbeResult &r) {
+        // The process queue is shared and can outlive this library.
+        MediaTools::probe(path, [this, self = QPointer<ClipLibrary>(this), path](const ProbeResult &r) {
+            if (!self) return;
             m_probing.remove(path);
             if (!r.ok) {
                 // File may still be being written (e.g. copied in); retry shortly.
@@ -235,7 +238,8 @@ void ClipLibrary::ensureMedia(const QString &path)
         m_thumbing.insert(path);
         QDir().mkpath(metaDir() + "/thumbs");
         const double at = qMin(1.0, c->duration / 2);
-        MediaTools::thumbnail(path, thumbPath(path), at, [this, path](bool ok) {
+        MediaTools::thumbnail(path, thumbPath(path), at, [this, self = QPointer<ClipLibrary>(this), path](bool ok) {
+            if (!self) return;
             // Keep the path in m_thumbing on failure so we don't retry forever.
             if (!ok) return;
             m_thumbing.remove(path);
