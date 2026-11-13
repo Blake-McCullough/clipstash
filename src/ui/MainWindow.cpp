@@ -76,6 +76,19 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         m_editor->setJobIdle(m_settings.copyLinkAfterUpload ? "Uploaded. Link copied to the clipboard." : "Uploaded.");
         notify("Clip shared", url);
     });
+    connect(&m_jobs, &ClipJobs::converted, this, [this](const QString &) {
+        m_libraryPage->clearJobProgress();
+        m_editor->setJobIdle("Converted to H.264.");
+    });
+    connect(&m_jobs, &ClipJobs::batchFinished, this,
+            [this](const QString &what, int ok, int failed, const QString &lastError) {
+        m_libraryPage->clearJobProgress();
+        if (ok + failed < 2 && failed == 0) return;  // a single clip already reported itself
+        QString text = QString("%1 %2 clip%3.").arg(what).arg(ok).arg(ok == 1 ? "" : "s");
+        if (failed > 0) text += QString(" %1 failed: %2").arg(failed).arg(lastError);
+        notify("Clipstash", text);
+        if (failed > 0) QMessageBox::warning(this, "Clipstash", text);
+    });
     connect(&m_jobs, &ClipJobs::failed, this, [this](const QString &, const QString &msg) {
         m_libraryPage->clearJobProgress();
         m_editor->setJobIdle(msg, true);
@@ -176,6 +189,14 @@ void MainWindow::buildUi()
     connect(m_libraryPage, &LibraryPage::openRequested, this, &MainWindow::openClip);
     connect(m_libraryPage, &LibraryPage::shareRequested, this, &MainWindow::shareClip);
     connect(m_libraryPage, &LibraryPage::deleteRequested, this, &MainWindow::deleteClips);
+    connect(m_libraryPage, &LibraryPage::exportRequested, this, [this](const QStringList &paths) {
+        if (m_jobs.busy()) {
+            QMessageBox::information(this, "Clipstash", "Another export or upload is still running.");
+            return;
+        }
+        m_jobs.exportClips(paths, m_settings);
+    });
+    connect(m_libraryPage, &LibraryPage::convertRequested, this, &MainWindow::convertClips);
 
     connect(m_editor, &EditorPage::backRequested, this, [this] { showPage(PageLibrary); });
     connect(m_editor, &EditorPage::shareRequested, this, &MainWindow::shareClip);
@@ -361,6 +382,25 @@ void MainWindow::exportClip(const QString &path)
         return;
     }
     m_jobs.exportClip(*c, m_settings);
+}
+
+void MainWindow::convertClips(const QStringList &paths)
+{
+    if (paths.isEmpty()) return;
+    if (m_jobs.busy()) {
+        QMessageBox::information(this, "Clipstash", "Another export or upload is still running.");
+        return;
+    }
+    const QString what = paths.size() == 1 ? QString("this clip") : QString("%1 clips").arg(paths.size());
+    QMessageBox box(QMessageBox::Question, "Convert to H.264",
+                    QString("Convert %1 to H.264 so the files play in Discord and browsers?").arg(what),
+                    QMessageBox::Cancel, this);
+    box.setInformativeText("The original files are replaced. Names, dates, audio tracks and edits are kept. "
+                           "Re-encoding loses a tiny amount of quality and cannot be undone.");
+    QPushButton *go = box.addButton("Convert", QMessageBox::AcceptRole);
+    box.exec();
+    if (box.clickedButton() != go) return;
+    m_jobs.convertClips(paths, m_settings);
 }
 
 void MainWindow::notify(const QString &title, const QString &text)

@@ -43,6 +43,7 @@ private:
     void deleteClips(const QStringList &paths);
     void shareClip(const QString &path);
     void exportClip(const QString &path);
+    void convertClips(const QStringList &paths);
     void notify(const QString &title, const QString &text);
     void writeAutostart(bool enabled);
     void showWindow();

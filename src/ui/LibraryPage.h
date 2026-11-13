@@ -39,6 +39,8 @@ signals:
     void openRequested(const QString &path);
     void shareRequested(const QString &path);
     void deleteRequested(const QStringList &paths);
+    void exportRequested(const QStringList &paths);
+    void convertRequested(const QStringList &paths);
 
 private:
     void showContextMenu(const QPoint &pos);

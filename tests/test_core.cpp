@@ -1,5 +1,6 @@
 #include "core/Clip.h"
 #include "core/ClipJobs.h"
+#include "core/ClipLibrary.h"
 #include "core/Exporter.h"
 #include "core/MediaTools.h"
 #include "core/Recorder.h"
@@ -264,6 +265,71 @@ private slots:
         QVERIFY2(qAbs(r.duration - 3.0) < 0.3, qPrintable(QString::number(r.duration)));
 
         QCOMPARE(ClipJobs::uniqueOutputPath(src), dir.filePath("src_edit.mp4"));
+    }
+
+    // Batch-convert HEVC clips in place and check the files really changed
+    // codec while keeping their tracks, dates and edit state.
+    void convertInPlace()
+    {
+        if (!haveFfmpeg()) QSKIP("ffmpeg not installed");
+        QProcess enc;
+        enc.start("ffmpeg", {"-hide_banner", "-encoders"});
+        enc.waitForFinished(10000);
+        if (!enc.readAllStandardOutput().contains("libx265")) QSKIP("no HEVC encoder to make test clips");
+
+        QTemporaryDir dir;
+        QStringList files;
+        for (int i = 0; i < 2; ++i) {
+            const QString f = dir.filePath(QString("Replay_%1.mp4").arg(i));
+            QCOMPARE(QProcess::execute("ffmpeg", {"-v", "error", "-y",
+                "-f", "lavfi", "-i", "testsrc=size=320x180:rate=30:duration=2",
+                "-f", "lavfi", "-i", "sine=frequency=300:duration=2",
+                "-f", "lavfi", "-i", "sine=frequency=900:duration=2",
+                "-map", "0:v", "-map", "1:a", "-map", "2:a",
+                "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error",
+                "-pix_fmt", "yuv420p", "-c:a", "aac", f}), 0);
+            files << f;
+        }
+        const QDateTime stamp = QDateTime::fromSecsSinceEpoch(1700000000);
+        {
+            QFile f(files[0]);
+            QVERIFY(f.open(QIODevice::ReadWrite));
+            QVERIFY(f.setFileTime(stamp, QFileDevice::FileModificationTime));
+        }
+
+        ClipLibrary lib;
+        lib.setDirectory(dir.path());
+        QTRY_VERIFY_WITH_TIMEOUT(lib.rowCount() == 2 && lib.clipAt(0).videoCodec == "hevc"
+                                     && lib.clipAt(1).videoCodec == "hevc", 15000);
+        lib.update(files[0], [](Clip &c) { c.trimStart = 0.5; c.title = "Keep me"; });
+
+        Settings s;
+        s.exportEncoder = "libx264";
+        s.exportMaxHeight = 90;  // must be ignored for in-place conversion
+        ClipJobs jobs(&lib);
+        QSignalSpy done(&jobs, &ClipJobs::batchFinished);
+        jobs.convertClips(files, s);
+        QVERIFY(done.wait(60000));
+        QCOMPARE(done[0][1].toInt(), 2);
+        QCOMPARE(done[0][2].toInt(), 0);
+
+        for (const QString &f : std::as_const(files)) {
+            QProcess probe;
+            probe.start("ffprobe", {"-v", "error", "-print_format", "json", "-show_format", "-show_streams", f});
+            QVERIFY(probe.waitForFinished(10000));
+            const ProbeResult r = MediaTools::parseProbeJson(probe.readAllStandardOutput());
+            QCOMPARE(r.videoCodec, QString("h264"));
+            QCOMPARE(r.height, 180);
+            QCOMPARE(r.audioTitles.size(), 2);  // both tracks survive
+        }
+        QCOMPARE(QFileInfo(files[0]).lastModified().toSecsSinceEpoch(), stamp.toSecsSinceEpoch());
+        const Clip *c = lib.clip(files[0]);
+        QVERIFY(c);
+        QCOMPARE(c->videoCodec, QString("h264"));
+        QCOMPARE(c->title, QString("Keep me"));
+        QCOMPARE(c->trimStart, 0.5);
+        QCOMPARE(lib.rowCount(), 2);
+        QVERIFY(QDir(dir.path() + "/.clipstash/tmp").isEmpty());
     }
 };
 

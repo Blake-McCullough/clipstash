@@ -11,6 +11,8 @@ struct ExportOptions {
     int quality = 21;             // crf / cq / qp
     int maxHeight = 0;            // 0 = keep; only applies when re-encoding
     int audioKbps = 192;
+    // Convert the file as it is: no trim, every audio track kept untouched.
+    bool wholeFile = false;
 
     static ExportOptions fromSettings(const Settings &s);
     // Options for one clip: applies the "make it play everywhere" rule (HEVC

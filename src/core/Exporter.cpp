@@ -35,7 +35,7 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
     const bool vaapi = o.reencodeVideo && o.encoder == "h264_vaapi";
     if (vaapi) a << "-vaapi_device" << "/dev/dri/renderD128";
 
-    if (clip.isTrimmed()) {
+    if (clip.isTrimmed() && !o.wholeFile) {
         a << "-ss" << QString::number(clip.effectiveStart(), 'f', 3);
         a << "-to" << QString::number(clip.effectiveEnd(), 'f', 3);
     }
@@ -47,7 +47,7 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
     for (int i = 0; i < clip.tracks.size(); ++i)
         if (clip.tracks[i].enabled && clip.tracks[i].volume > 0.001) enabled << i;
 
-    if (clip.tracks.isEmpty()) {
+    if (clip.tracks.isEmpty() || o.wholeFile) {
         a << "-map" << "0:a?" << "-c:a" << "copy";
     } else if (enabled.isEmpty()) {
         a << "-an";
@@ -97,7 +97,7 @@ void Exporter::start(const Clip &clip, const ExportOptions &opts, const QString 
     m_out = outPath;
     m_clip = clip;
     m_opts = opts;
-    m_duration = clip.editedDuration();
+    m_duration = opts.wholeFile ? clip.duration : clip.editedDuration();
     m_cancelled = false;
     launch();
 }

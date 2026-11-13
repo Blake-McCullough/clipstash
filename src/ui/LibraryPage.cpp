@@ -213,6 +213,21 @@ void LibraryPage::showContextMenu(const QPoint &pos)
         menu.addAction("Open link", this, [=] { QDesktopServices::openUrl(QUrl(clip.shareUrl)); });
     }
     menu.addSeparator();
+    const int many = selection.size();
+    menu.addAction(many > 1 ? QString("Export %1 clips for sharing (H.264 copies)").arg(many)
+                            : QString("Export for sharing (H.264 copy)"),
+                   this, [=, this] { emit exportRequested(selection); });
+    // Only offered when something selected is not H.264 already.
+    QStringList convertible;
+    for (const QString &p : selection) {
+        const Clip *sel = m_library->clip(p);
+        if (sel && !sel->playsEverywhere() && sel->videoCodec != "unknown") convertible << p;
+    }
+    if (!convertible.isEmpty())
+        menu.addAction(convertible.size() > 1 ? QString("Convert %1 originals to H.264…").arg(convertible.size())
+                                              : QString("Convert original to H.264…"),
+                       this, [=, this] { emit convertRequested(convertible); });
+    menu.addSeparator();
     menu.addAction("Show in file manager", this, [=] {
         QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
     });

@@ -6,6 +6,7 @@
 #include "core/Exporter.h"
 #include "core/Recorder.h"
 #include "core/Settings.h"
+#include <unistd.h>
 #include <QDirIterator>
 #include <QFileInfo>
 #include <QStandardPaths>
@@ -79,7 +80,8 @@ static int diagnose()
     out << "pixeldrain key: " << (s.pixeldrainKey.isEmpty() ? "not set" : "set") << "\n";
     out << "export: mode=" << s.exportVideoMode << " encoder=" << s.exportEncoder
         << " (auto=" << ExportOptions::autoEncoder() << ") convert-to-h264=" << (s.exportCompat ? "on" : "off") << "\n";
-    return 0;
+    out.flush();
+    _exit(0);  // skip teardown: the library has background probes in flight
 }
 
 int main(int argc, char **argv)

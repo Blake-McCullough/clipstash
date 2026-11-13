@@ -113,6 +113,10 @@ command line and which tools were found. Handy when something does not show up.
   in HEVC or AV1 (smaller files, nicer at 4K), "Save as new clip" and sharing convert the
   clip to H.264 for you, using the GPU encoder when there is one. The original recording in
   the clip folder stays HEVC/AV1, so send the converted clip, not the original.
+- To fix up clips you already have, select them in the library (Ctrl+A for all) and
+  right-click: **Export for sharing** makes H.264 copies with your trim and audio mix applied,
+  **Convert originals to H.264** re-encodes the files themselves in place, keeping names,
+  dates, audio tracks and edits.
 - Titles, edits and links are stored in a hidden `.clipstash` folder inside the clip folder,
   so the library survives moving the drive or reinstalling.
 - If the preview misbehaves on an unusual GPU setup, mpv options can be overridden:
