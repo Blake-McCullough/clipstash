@@ -61,7 +61,8 @@ struct Settings {
 
     // export
     QString exportVideoMode = "copy";  // copy | reencode
-    QString exportEncoder = "libx264";
+    QString exportEncoder = "auto";    // auto | libx264 | h264_nvenc | h264_vaapi
+    bool exportCompat = true;          // convert HEVC/AV1 to H.264 on export and share
     int exportQuality = 21;
     int exportMaxHeight = 0;
     int exportAudioKbps = 192;

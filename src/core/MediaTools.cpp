@@ -20,6 +20,7 @@ ProbeResult parseProbeJson(const QByteArray &json)
         if (type == "video" && r.width == 0) {
             r.width = s["width"].toInt();
             r.height = s["height"].toInt();
+            r.videoCodec = s["codec_name"].toString();
             if (r.duration <= 0) r.duration = s["duration"].toString().toDouble();
         } else if (type == "audio") {
             r.audioTitles << s["tags"].toObject()["title"].toString();

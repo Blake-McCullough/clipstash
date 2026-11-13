@@ -10,6 +10,7 @@ struct ProbeResult {
     double duration = 0;
     int width = 0;
     int height = 0;
+    QString videoCodec;  // ffprobe codec_name, e.g. h264, hevc, av1
     QStringList audioTitles;  // one entry per audio stream (may be empty strings)
 };
 

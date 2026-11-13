@@ -21,6 +21,7 @@ QJsonObject Clip::toJson() const
     o["title"] = title;
     o["duration"] = duration;
     o["width"] = width;
+    o["videoCodec"] = videoCodec;
     o["height"] = height;
     o["probed"] = probed;
     o["trimStart"] = trimStart;
@@ -40,6 +41,7 @@ void Clip::applyJson(const QJsonObject &o)
     if (o.contains("title")) title = o["title"].toString();
     duration = o["duration"].toDouble(duration);
     width = o["width"].toInt(width);
+    videoCodec = o["videoCodec"].toString(videoCodec);
     height = o["height"].toInt(height);
     probed = o["probed"].toBool(probed);
     trimStart = o["trimStart"].toDouble(0);

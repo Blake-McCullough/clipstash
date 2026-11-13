@@ -88,7 +88,8 @@ Settings Settings::load()
     flag("share/copyLink", c.copyLinkAfterUpload);
 
     str("export/videoMode", c.exportVideoMode);
-    str("export/encoder", c.exportEncoder);
+    str("export/videoEncoder", c.exportEncoder);
+    flag("export/compat", c.exportCompat);
     num("export/quality", c.exportQuality);
     num("export/maxHeight", c.exportMaxHeight);
     num("export/audioKbps", c.exportAudioKbps);
@@ -144,7 +145,8 @@ void Settings::save() const
     s.setValue("share/copyLink", copyLinkAfterUpload);
 
     s.setValue("export/videoMode", exportVideoMode);
-    s.setValue("export/encoder", exportEncoder);
+    s.setValue("export/videoEncoder", exportEncoder);
+    s.setValue("export/compat", exportCompat);
     s.setValue("export/quality", exportQuality);
     s.setValue("export/maxHeight", exportMaxHeight);
     s.setValue("export/audioKbps", exportAudioKbps);

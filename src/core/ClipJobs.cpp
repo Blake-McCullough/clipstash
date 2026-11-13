@@ -87,7 +87,7 @@ bool ClipJobs::exportClip(const Clip &clip, const Settings &s)
     m_sharing = false;
     setBusy(true);
     emit progress(m_clipPath, "Exporting", 0);
-    m_exporter.start(clip, ExportOptions::fromSettings(s), uniqueOutputPath(clip.path));
+    m_exporter.start(clip, ExportOptions::forClip(s, clip, false), uniqueOutputPath(clip.path));
     return true;
 }
 
@@ -105,16 +105,16 @@ bool ClipJobs::shareClip(const Clip &clip, const Settings &s)
         emit failed(path, "No Pixeldrain API key set. Add one in Settings → Sharing.");
         return false;
     }
-    if (clip.needsRender()) {
+    // Video is stream-copied (fast, lossless) unless the clip is HEVC/AV1,
+    // which browsers and Discord cannot play; those are converted to H.264.
+    const ExportOptions o = ExportOptions::forClip(s, clip, true);
+    if (clip.needsRender() || o.reencodeVideo) {
         // Render next to the library's metadata so the temp file lands on the
         // same (usually roomy) drive as the clips rather than a small tmpfs.
         const QString dir = m_library->metaDir() + "/tmp";
         QDir().mkpath(dir);
         m_tempFile = dir + "/share-" + QUuid::createUuid().toString(QUuid::Id128) + ".mp4";
         emit progress(m_clipPath, "Preparing", 0);
-        // Sharing always stream-copies video: it is fast and lossless.
-        ExportOptions o = ExportOptions::fromSettings(s);
-        o.reencodeVideo = false;
         m_exporter.start(clip, o, m_tempFile);
     } else {
         startUpload(clip.path);

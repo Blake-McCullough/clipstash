@@ -115,6 +115,27 @@ private slots:
         QVERIFY(a.value(a.indexOf("-vf") + 1).contains("720"));
     }
 
+    void compatConvertsHevc()
+    {
+        Settings s = baseSettings();
+        s.exportEncoder = "libx264";
+        Clip c = threeTrackClip();
+        c.tracks = {{"Only", true, 1.0}};
+        c.videoCodec = "hevc";
+        // even a share, which otherwise copies video, converts HEVC
+        ExportOptions o = ExportOptions::forClip(s, c, true);
+        QVERIFY(o.reencodeVideo);
+        QCOMPARE(Exporter::buildArgs(c, o, "/o.mp4").value(Exporter::buildArgs(c, o, "/o.mp4").indexOf("-c:v") + 1),
+                 QString("libx264"));
+        c.videoCodec = "h264";
+        QVERIFY(!ExportOptions::forClip(s, c, true).reencodeVideo);
+        c.videoCodec = "hevc";
+        s.exportCompat = false;
+        QVERIFY(!ExportOptions::forClip(s, c, true).reencodeVideo);
+        s.exportEncoder = "auto";
+        QVERIFY(ExportOptions::forClip(s, c, false).encoder != "auto");
+    }
+
     void needsRender()
     {
         Clip c = threeTrackClip();

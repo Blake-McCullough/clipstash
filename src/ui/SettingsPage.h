@@ -79,6 +79,7 @@ private:
     QCheckBox *m_closeToTray;
     QCheckBox *m_notify;
     QCheckBox *m_sound;
+    QCheckBox *m_exportCompat;
     QSlider *m_soundVolume;
     QCheckBox *m_autostart;
     QLabel *m_saved;

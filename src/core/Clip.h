@@ -20,6 +20,7 @@ struct Clip {
     // probed media info
     double duration = 0;
     int width = 0;
+    QString videoCodec;  // empty until probed
     int height = 0;
     bool probed = false;
 
@@ -40,6 +41,8 @@ struct Clip {
     // True when the file itself does not sound/look like the edit, so a render
     // is needed before sharing (browsers only play the first audio track).
     bool needsRender() const;
+    // Browsers and Discord only reliably play H.264.
+    bool playsEverywhere() const { return videoCodec.isEmpty() || videoCodec == "h264"; }
 
     QJsonObject toJson() const;
     void applyJson(const QJsonObject &o);

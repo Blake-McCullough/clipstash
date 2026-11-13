@@ -199,7 +199,7 @@ void ClipLibrary::ensureMedia(const QString &path)
     const Clip *c = clip(path);
     if (!c) return;
 
-    if (!c->probed && !m_probing.contains(path) && m_probeAttempts.value(path) < 3) {
+    if ((!c->probed || c->videoCodec.isEmpty()) && !m_probing.contains(path) && m_probeAttempts.value(path) < 3) {
         m_probing.insert(path);
         ++m_probeAttempts[path];
         MediaTools::probe(path, [this, path](const ProbeResult &r) {
@@ -213,6 +213,7 @@ void ClipLibrary::ensureMedia(const QString &path)
                 c.duration = r.duration;
                 c.width = r.width;
                 c.height = r.height;
+                c.videoCodec = r.videoCodec.isEmpty() ? QString("unknown") : r.videoCodec;
                 c.probed = true;
                 c.size = QFileInfo(path).size();
                 QList<ClipTrack> tracks;

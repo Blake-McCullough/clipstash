@@ -215,11 +215,13 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     share->addRow("", m_copyLink);
 
     // --- export
-    auto *exp = section(root, "Export", "Used by “Save as new clip”. Sharing always copies the video stream untouched.");
+    auto *exp = section(root, "Export", "Used by “Save as new clip” and when sharing.");
+    m_exportCompat = new QCheckBox("Convert HEVC / AV1 clips to H.264 so they play in Discord and browsers");
+    exp->addRow("", m_exportCompat);
     m_exportMode = combo({{"Fast: copy video (cuts snap to keyframes)", "copy"},
                           {"Precise: re-encode video (frame-accurate cuts)", "reencode"}});
     exp->addRow("Video", m_exportMode);
-    m_exportEncoder = combo({{"x264 (CPU)", "libx264"}, {"NVENC (NVIDIA)", "h264_nvenc"}, {"VAAPI (AMD / Intel)", "h264_vaapi"}});
+    m_exportEncoder = combo({{"Automatic", "auto"}, {"x264 (CPU)", "libx264"}, {"NVENC (NVIDIA)", "h264_nvenc"}, {"VAAPI (AMD / Intel)", "h264_vaapi"}});
     exp->addRow("Encoder", m_exportEncoder);
     m_exportQuality = spin(10, 40);
     m_exportQuality->setToolTip("Lower is better quality and a bigger file.");
@@ -227,12 +229,13 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_exportHeight = combo({{"Keep original", "0"}, {"1440p", "1440"}, {"1080p", "1080"}, {"720p", "720"}});
     exp->addRow("Max height", m_exportHeight);
     auto updateExport = [this] {
-        const bool re = m_exportMode->currentData().toString() == "reencode";
+        const bool re = m_exportMode->currentData().toString() == "reencode" || m_exportCompat->isChecked();
         m_exportEncoder->setEnabled(re);
         m_exportQuality->setEnabled(re);
         m_exportHeight->setEnabled(re);
     };
     connect(m_exportMode, &QComboBox::currentIndexChanged, this, updateExport);
+    connect(m_exportCompat, &QCheckBox::toggled, this, updateExport);
 
     // --- app
     auto *app = section(root, "App");
@@ -432,11 +435,12 @@ void SettingsPage::setSettings(const Settings &s)
     m_pixeldrainKey->setText(s.pixeldrainKey);
     m_copyLink->setChecked(s.copyLinkAfterUpload);
 
+    m_exportCompat->setChecked(s.exportCompat);
     selectData(m_exportMode, s.exportVideoMode);
     selectData(m_exportEncoder, s.exportEncoder);
     m_exportQuality->setValue(s.exportQuality);
     selectData(m_exportHeight, QString::number(s.exportMaxHeight));
-    const bool re = s.exportVideoMode == "reencode";
+    const bool re = s.exportVideoMode == "reencode" || s.exportCompat;
     m_exportEncoder->setEnabled(re);
     m_exportQuality->setEnabled(re);
     m_exportHeight->setEnabled(re);
@@ -489,6 +493,7 @@ Settings SettingsPage::settings() const
     s.pixeldrainKey = m_pixeldrainKey->text().trimmed();
     s.copyLinkAfterUpload = m_copyLink->isChecked();
 
+    s.exportCompat = m_exportCompat->isChecked();
     s.exportVideoMode = m_exportMode->currentData().toString();
     s.exportEncoder = m_exportEncoder->currentData().toString();
     s.exportQuality = m_exportQuality->value();

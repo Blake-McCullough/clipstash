@@ -13,6 +13,12 @@ struct ExportOptions {
     int audioKbps = 192;
 
     static ExportOptions fromSettings(const Settings &s);
+    // Options for one clip: applies the "make it play everywhere" rule (HEVC
+    // and AV1 are converted to H.264) and resolves the automatic encoder.
+    // Sharing never re-encodes just for frame-exact cuts.
+    static ExportOptions forClip(const Settings &s, const Clip &clip, bool sharing);
+    // h264_nvenc on NVIDIA systems, otherwise libx264.
+    static QString autoEncoder();
 };
 
 // Renders a clip's edit state (trim + audio mix) to a new file with ffmpeg.
@@ -38,4 +44,8 @@ private:
     QByteArray m_buf;
     QByteArray m_err;
     bool m_cancelled = false;
+    Clip m_clip;
+    ExportOptions m_opts;
+
+    void launch();
 };
