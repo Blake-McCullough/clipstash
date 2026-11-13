@@ -10,7 +10,7 @@
 #include <QLocale>
 #include <QSaveFile>
 
-static const QStringList kExtensions = {"mp4", "mkv", "webm", "mov"};
+static const QStringList kExtensions = {"mp4", "mkv", "webm", "mov", "m4v", "avi", "ts", "flv"};
 
 ClipLibrary::ClipLibrary(QObject *parent) : QAbstractListModel(parent)
 {
