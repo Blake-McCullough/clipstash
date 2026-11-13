@@ -85,8 +85,8 @@ Clipstash checks this repository's GitHub releases when it starts and shows an
 the new build, verifies it, and replaces the installed program. If Clipstash lives in a system
 folder such as `/usr/bin`, your desktop asks for your password to do that. Then restart.
 
-Releases are built automatically: bump the version in `CMakeLists.txt`, then push a matching
-tag (`git tag v0.3.0 && git push origin v0.3.0`).
+Releases are built automatically: change the version in `CMakeLists.txt`, push to `main`,
+and GitHub Actions builds, tests and publishes the release for that version.
 
 ## Troubleshooting
 
