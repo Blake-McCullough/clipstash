@@ -293,6 +293,7 @@ void MainWindow::applySettings(const Settings &s)
     const Settings old = m_settings;
     m_settings = s;
     m_settings.save();
+    m_settingsPage->setSettings(m_settings);  // show the cleaned-up values
 
     if (old.libraryDir != s.libraryDir) {
         if (m_stack->currentIndex() == PageEditor) showPage(PageLibrary);

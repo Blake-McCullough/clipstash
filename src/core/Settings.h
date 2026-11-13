@@ -70,6 +70,9 @@ struct Settings {
     static Settings load();
     void save() const;
     static QString defaultLibraryDir();
+    // Cleans up a folder typed or pasted by hand: quotes, file:// and ~ are
+    // resolved and the result is absolute.
+    static QString normalizeDir(const QString &dir);
 
     // True if a change between the two requires restarting the recorder.
     bool recorderConfigDiffers(const Settings &o) const;

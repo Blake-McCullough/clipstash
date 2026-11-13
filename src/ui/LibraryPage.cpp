@@ -152,8 +152,10 @@ LibraryPage::LibraryPage(ClipLibrary *library, QWidget *parent) : QWidget(parent
 void LibraryPage::updateSummary()
 {
     const int n = m_library->rowCount();
-    m_summary->setText(n == 0 ? QString()
-        : QString("%1 clip%2 · %3").arg(n).arg(n == 1 ? "" : "s").arg(formatSize(m_library->totalSize())));
+    // Always name the folder so it is obvious which one is being shown.
+    const QString dir = m_library->directory();
+    m_summary->setText(n == 0 ? QString("No clips in %1").arg(dir)
+        : QString("%1 clip%2 · %3 · %4").arg(n).arg(n == 1 ? "" : "s").arg(formatSize(m_library->totalSize()), dir));
     m_empty->setVisible(m_filter->rowCount() == 0);
     if (n > 0) m_empty->setText("Nothing matches.");
     else m_empty->setText("No clips yet.\nPress your clip hotkey while playing, or hit “Clip now”.");

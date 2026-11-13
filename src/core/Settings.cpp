@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QSettings>
+#include <QUrl>
 #include <QStandardPaths>
 #include <QStringList>
 
@@ -24,6 +25,18 @@ QString Settings::defaultLibraryDir()
     return videos + "/Clipstash";
 }
 
+QString Settings::normalizeDir(const QString &dir)
+{
+    QString d = dir.trimmed();
+    if (d.size() >= 2 && ((d.startsWith('"') && d.endsWith('"')) || (d.startsWith('\'') && d.endsWith('\''))))
+        d = d.mid(1, d.size() - 2).trimmed();
+    if (d.startsWith("file://")) d = QUrl(d).toLocalFile();
+    if (d == "~") d = QDir::homePath();
+    else if (d.startsWith("~/")) d = QDir::homePath() + d.mid(1);
+    if (d.isEmpty()) return defaultLibraryDir();
+    return QDir::cleanPath(QDir(d).absolutePath());
+}
+
 Settings Settings::load()
 {
     QSettings s;
@@ -34,6 +47,7 @@ Settings Settings::load()
 
     c.libraryDir = defaultLibraryDir();
     str("storage/libraryDir", c.libraryDir);
+    c.libraryDir = normalizeDir(c.libraryDir);
 
     str("recorder/binary", c.recorderBinary);
     str("recorder/captureSource", c.captureSource);

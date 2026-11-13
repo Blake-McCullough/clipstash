@@ -2,6 +2,14 @@
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
+#include "core/ClipLibrary.h"
+#include "core/Exporter.h"
+#include "core/Recorder.h"
+#include "core/Settings.h"
+#include <QDirIterator>
+#include <QFileInfo>
+#include <QStandardPaths>
+#include <QTextStream>
 #include <QLoggingCategory>
 #include <QApplication>
 #include <QCommandLineParser>
@@ -25,6 +33,53 @@ static bool sendToRunning(const QString &command)
     sock.waitForBytesWritten(500);
     sock.disconnectFromServer();
     return true;
+}
+
+// Plain-text report for troubleshooting; never prints the API key.
+static int diagnose()
+{
+    QTextStream out(stdout);
+    const Settings s = Settings::load();
+    out << "clipstash " << CLIPSTASH_VERSION << " (Qt " << qVersion() << ", "
+        << QGuiApplication::platformName() << ", session " << qEnvironmentVariable("XDG_SESSION_TYPE", "?")
+        << ", desktop " << qEnvironmentVariable("XDG_CURRENT_DESKTOP", "?") << ")\n";
+
+    const QFileInfo dir(s.libraryDir);
+    out << "clip folder: " << s.libraryDir << "\n"
+        << "  exists: " << (dir.isDir() ? "yes" : "NO") << ", writable: " << (dir.isWritable() ? "yes" : "NO") << "\n";
+    QMap<QString, int> byExt;
+    QStringList sample;
+    int total = 0;
+    QDirIterator it(s.libraryDir, QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString p = it.next();
+        if (p.contains("/.clipstash/")) continue;
+        ++total;
+        ++byExt[QFileInfo(p).suffix().toLower()];
+        if (sample.size() < 8) sample << QDir(s.libraryDir).relativeFilePath(p);
+    }
+    out << "  files: " << total;
+    for (auto e = byExt.cbegin(); e != byExt.cend(); ++e) out << "  ." << e.key() << "=" << e.value();
+    out << "\n";
+    for (const QString &f : std::as_const(sample)) out << "    " << f << "\n";
+
+    ClipLibrary lib;
+    lib.setDirectory(s.libraryDir);
+    out << "  shown in library: " << lib.rowCount() << "\n";
+
+    auto tool = [&](const QString &name) {
+        const QString path = QStandardPaths::findExecutable(name);
+        out << name << ": " << (path.isEmpty() ? "NOT FOUND" : path) << "\n";
+    };
+    tool(s.recorderBinary);
+    tool("ffmpeg");
+    tool("ffprobe");
+    out << "recorder args: " << Recorder::buildArgs(s).join(' ') << "\n";
+    out << "hotkeys: " << s.hotkeyBackend << "\n";
+    out << "pixeldrain key: " << (s.pixeldrainKey.isEmpty() ? "not set" : "set") << "\n";
+    out << "export: mode=" << s.exportVideoMode << " encoder=" << s.exportEncoder
+        << " (auto=" << ExportOptions::autoEncoder() << ") convert-to-h264=" << (s.exportCompat ? "on" : "off") << "\n";
+    return 0;
 }
 
 int main(int argc, char **argv)
@@ -51,8 +106,10 @@ int main(int argc, char **argv)
     QCommandLineOption toggle("toggle-recording", "Start or stop the background recorder.");
     QCommandLineOption minimized("minimized", "Start hidden in the system tray.");
     QCommandLineOption quit("quit", "Quit the running instance.");
-    parser.addOptions({saveClip, seconds, toggle, minimized, quit});
+    QCommandLineOption diag("diagnose", "Print a troubleshooting report and exit.");
+    parser.addOptions({saveClip, seconds, toggle, minimized, quit, diag});
     parser.process(app);
+    if (parser.isSet(diag)) return diagnose();
 
     QString command = "show";
     if (parser.isSet(saveClip)) command = "save-clip " + parser.value(seconds);

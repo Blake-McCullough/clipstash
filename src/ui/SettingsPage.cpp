@@ -458,8 +458,7 @@ void SettingsPage::setSettings(const Settings &s)
 Settings SettingsPage::settings() const
 {
     Settings s = m_base;
-    s.libraryDir = m_libraryDir->text().trimmed();
-    if (s.libraryDir.isEmpty()) s.libraryDir = Settings::defaultLibraryDir();
+    s.libraryDir = Settings::normalizeDir(m_libraryDir->text());
     // The combo shows "DP-1 (2560x1440)"; the recorder wants just "DP-1".
     const int idx = m_source->findText(m_source->currentText());
     s.captureSource = idx >= 0 && m_source->itemData(idx).isValid()

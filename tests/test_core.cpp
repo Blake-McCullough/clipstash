@@ -136,6 +136,14 @@ private slots:
         QVERIFY(ExportOptions::forClip(s, c, false).encoder != "auto");
     }
 
+    void folderNormalisation()
+    {
+        QCOMPARE(Settings::normalizeDir("~/Videos/clips/"), QDir::homePath() + "/Videos/clips");
+        QCOMPARE(Settings::normalizeDir("  '/mnt/games/My Clips'  "), QString("/mnt/games/My Clips"));
+        QCOMPARE(Settings::normalizeDir("file:///mnt/d/clips"), QString("/mnt/d/clips"));
+        QCOMPARE(Settings::normalizeDir(""), Settings::defaultLibraryDir());
+    }
+
     void needsRender()
     {
         Clip c = threeTrackClip();
