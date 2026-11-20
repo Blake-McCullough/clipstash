@@ -89,6 +89,8 @@ private:
     QStringList m_knownApps;
     QComboBox *m_discordLimit;
     void updateAutoSplitUi();
+    void updateStorageWarning();
+    QLabel *m_storageWarning;
     QCheckBox *m_exportCompat;
     QSlider *m_soundVolume;
     QCheckBox *m_autostart;

@@ -7,6 +7,7 @@
 #include "core/Settings.h"
 #include "hotkeys/HotkeyManager.h"
 
+#include <QHash>
 #include <QTimer>
 #include <QMainWindow>
 #include <QSystemTrayIcon>
@@ -84,5 +85,7 @@ private:
     QTimer m_folderWait;
     int m_folderWaitTries = 0;
     QTimer m_appWatch;
+    QHash<QString, int> m_expectedLength;
+    QList<AudioTrackCfg> m_recordedTracks;
     bool m_quitting = false;
 };

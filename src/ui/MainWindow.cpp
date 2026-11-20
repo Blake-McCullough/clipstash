@@ -40,15 +40,37 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_settingsPage->setSettings(m_settings);
 
     // recorder
+    connect(&m_recorder, &Recorder::stateChanged, this, [this](Recorder::State st) {
+        if (st == Recorder::State::Starting) m_recordedTracks = m_settings.effectiveTracks();
+    });
     connect(&m_recorder, &Recorder::stateChanged, this, &MainWindow::updateRecorderUi);
-    connect(&m_recorder, &Recorder::clipSaved, this, [this](const QString &path) {
+    connect(&m_recorder, &Recorder::clipSaved, this, [this](const QString &path, int expected, qint64) {
         QStringList names;
-        const QList<AudioTrackCfg> tracks = m_settings.effectiveTracks();
+        const QList<AudioTrackCfg> tracks = m_recordedTracks;
         for (const AudioTrackCfg &t : tracks)
             if (!t.sources.trimmed().isEmpty()) names << t.name;
+        m_expectedLength[QFileInfo(path).absoluteFilePath()] = expected;
         m_library.addFile(path, names);
-        if (m_settings.soundOnSave) m_sound.play(m_settings.soundVolume);
         if (m_settings.notifyOnSave) notify("Clip saved", QFileInfo(path).fileName());
+    });
+    connect(&m_recorder, &Recorder::saveFailed, this, [this](const QString &msg) {
+        notify("Clip not saved", msg);
+    });
+    // Once a new clip is probed, check it is as long as it should be, so a
+    // short or truncated save is reported instead of discovered later.
+    connect(&m_library, &ClipLibrary::clipChanged, this, [this](const QString &path) {
+        auto it = m_expectedLength.find(path);
+        if (it == m_expectedLength.end()) return;
+        const Clip *c = m_library.clip(path);
+        if (!c || !c->probed) return;
+        const int expected = *it;
+        m_expectedLength.erase(it);
+        Recorder::log(QString("probed %1: %2 s (expected %3 s)").arg(QFileInfo(path).fileName())
+                          .arg(c->duration, 0, 'f', 1).arg(expected));
+        if (expected > 0 && c->duration < expected - 4)
+            notify("Clip is shorter than expected",
+                   QString("%1 is %2 long; about %3 was expected. Details are in the recorder log.")
+                       .arg(c->title, formatDuration(c->duration), formatDuration(expected)));
     });
     connect(&m_recorder, &Recorder::failed, this, [this](const QString &msg) {
         notify("Recorder stopped", msg);
@@ -289,11 +311,14 @@ void MainWindow::openClip(const QString &path)
 
 void MainWindow::saveClip(int seconds)
 {
-    if (m_recorder.state() != Recorder::State::Running && m_recorder.state() != Recorder::State::Starting) {
-        notify("Recorder is not running", "Start the recorder to be able to clip.");
+    QString why;
+    if (!m_recorder.saveReplay(seconds, &why)) {
+        notify("Clip not saved", why);
         return;
     }
-    if (!m_recorder.saveReplay(seconds)) notify("Could not save clip", "The recorder did not accept the request.");
+    // Chime the moment the clip is taken, like Medal. Writing the file can
+    // take a second or two on a slow drive; a failure is reported separately.
+    if (m_settings.soundOnSave) m_sound.play(m_settings.soundVolume);
 }
 
 void MainWindow::toggleRecorder()
@@ -354,10 +379,11 @@ void MainWindow::checkForNewAudioApps()
             added << name;
         }
         if (added.isEmpty()) return;
+        // Restarting the recorder would throw away the replay buffer, so the
+        // new tracks are used from the next time the recorder starts.
+        Recorder::log("auto split: noticed " + added.join(", ") + " (used from next recorder start)");
         m_settings.save();
         m_settingsPage->setSettings(m_settings);
-        if (m_recorder.isActive()) m_recorder.restart(m_settings);
-        updateRecorderUi();
     });
 }
 
@@ -417,8 +443,12 @@ void MainWindow::applySettings(const Settings &s)
         if (m_stack->currentIndex() == PageEditor) showPage(PageLibrary);
         m_library.setDirectory(s.libraryDir);
     }
-    if (s.recorderConfigDiffers(old) && m_recorder.isActive()) m_recorder.restart(m_settings);
-    else if (s.recorderConfigDiffers(old) && m_recorder.state() == Recorder::State::Failed) m_recorder.start(m_settings);
+    // Compare with what the recorder is actually running, so apps noticed by
+    // auto split since it started are picked up on this save too.
+    const bool differs = m_recorder.isActive() ? Recorder::buildArgs(m_settings) != m_recorder.runningArgs()
+                                               : s.recorderConfigDiffers(old);
+    if (differs && m_recorder.isActive()) m_recorder.restart(m_settings);
+    else if (differs && m_recorder.state() == Recorder::State::Failed) m_recorder.start(m_settings);
     if (old.hotkeys != s.hotkeys || old.hotkeyBackend != s.hotkeyBackend) m_hotkeys.apply(m_settings);
     if (old.autostart != s.autostart) writeAutostart(s.autostart);
     updateRecorderUi();

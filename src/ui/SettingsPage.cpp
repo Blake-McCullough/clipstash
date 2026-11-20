@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSlider>
+#include <QFileInfo>
 #include <QSpinBox>
 #include <QStorageInfo>
 #include <QTimer>
@@ -147,6 +148,15 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     cap->addRow("Bitrate", m_bitrate);
     m_replayStorage = combo({{"RAM (default)", "ram"}, {"Disk (for very long buffers)", "disk"}});
     cap->addRow("Buffer kept in", m_replayStorage);
+    m_storageWarning = new QLabel;
+    m_storageWarning->setObjectName("muted");
+    m_storageWarning->setStyleSheet("color: #ffb454;");
+    m_storageWarning->setWordWrap(true);
+    m_storageWarning->setMinimumWidth(560);
+    m_storageWarning->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    m_storageWarning->hide();
+    cap->addRow("", m_storageWarning);
+    connect(m_replayStorage, &QComboBox::currentIndexChanged, this, &SettingsPage::updateStorageWarning);
     m_cursor = new QCheckBox("Record the cursor");
     cap->addRow("", m_cursor);
     m_restorePortal = new QCheckBox("Remember the screen picked in the portal dialog");
@@ -468,6 +478,7 @@ void SettingsPage::setSettings(const Settings &s)
     m_bitrate->setValue(s.bitrateKbps);
     m_resolution->setCurrentText(s.resolution.isEmpty() ? "Native" : s.resolution);
     selectData(m_replayStorage, s.replayStorage);
+    updateStorageWarning();
     m_cursor->setChecked(s.recordCursor);
     m_restorePortal->setChecked(s.restorePortalSession);
     m_extraArgs->setText(s.extraArgs);
@@ -564,14 +575,35 @@ Settings SettingsPage::settings() const
     return s;
 }
 
+void SettingsPage::updateStorageWarning()
+{
+    // Keeping the buffer on disk means constant writes plus a full read and
+    // write on every save. On a Windows-format or FUSE drive that is slow.
+    const bool disk = m_replayStorage->currentData().toString() == "disk";
+    QString dir = Settings::normalizeDir(m_libraryDir->text());
+    while (!dir.isEmpty() && !QFileInfo(dir).exists()) dir = QFileInfo(dir).absolutePath();
+    const QString fs = QString::fromUtf8(QStorageInfo(dir).fileSystemType()).toLower();
+    static const QStringList slow = {"fuseblk", "ntfs", "ntfs3", "exfat", "vfat", "msdos"};
+    QString text;
+    if (disk && slow.contains(fs))
+        text = QString("The clip folder is on a %1 drive. A buffer kept on disk there makes saving clips slow "
+                       "and less reliable. RAM is recommended.").arg(fs == "fuseblk" ? "NTFS (FUSE)" : fs.toUpper());
+    else if (disk)
+        text = "A buffer on disk is written constantly and makes each save copy the whole buffer. "
+               "RAM is faster unless you need a very long buffer.";
+    m_storageWarning->setText(text);
+    m_storageWarning->setVisible(!text.isEmpty());
+}
+
 void SettingsPage::updateAutoSplitUi()
 {
     const bool on = m_autoSplit->isChecked();
     for (QWidget *w : std::as_const(m_manualTrackWidgets)) w->setVisible(!on);
     m_autoSplitHost->setVisible(on);
     m_autoSplitInfo->setText(m_knownApps.isEmpty()
-        ? "No apps noticed yet. They are added as they play sound while the recorder runs."
-        : "Own track: " + m_knownApps.join(", ") + ". Plus “Other audio” and “Microphone”.");
+        ? "No apps noticed yet. They are added as they play sound, and get their track the next time the recorder starts."
+        : "Own track: " + m_knownApps.join(", ") + ". Plus “Other audio” and “Microphone”. "
+          "Newly noticed apps get their track the next time the recorder starts.");
 }
 
 void SettingsPage::setUpdateState(const QString &status, const QString &button, bool enabled)

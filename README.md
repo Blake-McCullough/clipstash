@@ -107,6 +107,12 @@ and GitHub Actions builds, tests and publishes the release for that version.
 
 ## Troubleshooting
 
+- **Saving is slow, clips go missing or end early:** set **Settings → Capture → Buffer kept in**
+  to **RAM**. A buffer on disk is rewritten constantly and copied in full on every save, which
+  is slow on NTFS/exFAT drives shared with Windows.
+- Every start, save and recorder message is logged; `clipstash --diagnose` prints the last
+  lines along with the rest of the report.
+
 `clipstash --diagnose` prints the clip folder, how many video files are in it, the recorder
 command line and which tools were found. Handy when something does not show up.
 

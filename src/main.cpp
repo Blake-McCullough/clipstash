@@ -8,6 +8,7 @@
 #include "core/Settings.h"
 #include <unistd.h>
 #include <QDirIterator>
+#include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QTextStream>
@@ -80,6 +81,13 @@ static int diagnose()
     out << "pixeldrain key: " << (s.pixeldrainKey.isEmpty() ? "not set" : "set") << "\n";
     out << "export: mode=" << s.exportVideoMode << " encoder=" << s.exportEncoder
         << " (auto=" << ExportOptions::autoEncoder() << ") convert-to-h264=" << (s.exportCompat ? "on" : "off") << "\n";
+    QFile logFile(Recorder::logPath());
+    if (logFile.open(QIODevice::ReadOnly)) {
+        const QList<QByteArray> lines = logFile.readAll().split('\n');
+        out << "recorder log (" << Recorder::logPath() << "), last lines:\n";
+        for (qsizetype i = qMax<qsizetype>(0, lines.size() - 41); i < lines.size(); ++i)
+            if (!lines[i].isEmpty()) out << "  " << QString::fromUtf8(lines[i]) << "\n";
+    }
     out.flush();
     _exit(0);  // skip teardown: the library has background probes in flight
 }
