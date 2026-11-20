@@ -113,23 +113,25 @@ int main(int argc, char **argv)
     parser.addVersionOption();
     QCommandLineOption saveClip("save-clip", "Save a clip from the replay buffer.");
     QCommandLineOption seconds("seconds", "With --save-clip: only keep the last <n> seconds (10, 30, 60, 300, 600, 1800).", "n");
-    QCommandLineOption toggle("toggle-recording", "Start or stop the background recorder.");
+    QCommandLineOption toggle("toggle-recording", "Turn the replay buffer on or off.");
+    QCommandLineOption fullRec("toggle-full-recording", "Start or stop a full recording.");
     QCommandLineOption minimized("minimized", "Start hidden in the system tray.");
     QCommandLineOption quit("quit", "Quit the running instance.");
     QCommandLineOption diag("diagnose", "Print a troubleshooting report and exit.");
     QCommandLineOption record("record", "Start the recorder straight away.");
-    parser.addOptions({saveClip, seconds, toggle, minimized, quit, diag, record});
+    parser.addOptions({saveClip, seconds, toggle, fullRec, minimized, quit, diag, record});
     parser.process(app);
     if (parser.isSet(diag)) return diagnose();
 
     QString command = "show";
     if (parser.isSet(saveClip)) command = "save-clip " + parser.value(seconds);
     else if (parser.isSet(toggle)) command = "toggle-recording";
+    else if (parser.isSet(fullRec)) command = "toggle-full-recording";
     else if (parser.isSet(quit)) command = "quit";
 
     if (sendToRunning(command)) return 0;
     if (parser.isSet(quit)) return 0;
-    if (parser.isSet(saveClip) || parser.isSet(toggle)) {
+    if (parser.isSet(saveClip) || parser.isSet(toggle) || parser.isSet(fullRec)) {
         fprintf(stderr, "clipstash is not running\n");
         return 1;
     }

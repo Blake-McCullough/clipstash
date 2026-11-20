@@ -14,6 +14,7 @@
 #include <QLineEdit>
 #include <QListView>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QShortcut>
@@ -199,8 +200,11 @@ void LibraryPage::showContextMenu(const QPoint &pos)
     menu.addAction("Open in editor", this, [=, this] { emit openRequested(path); });
     menu.addAction("Rename…", this, [=, this] {
         bool ok = false;
-        const QString t = QInputDialog::getText(this, "Rename clip", "Title", QLineEdit::Normal, clip.title, &ok);
-        if (ok && !t.trimmed().isEmpty()) m_library->update(path, [&](Clip &c) { c.title = t.trimmed(); });
+        const QString t = QInputDialog::getText(this, "Rename clip", "Name (also used for the file name)",
+                                                QLineEdit::Normal, clip.title, &ok);
+        if (!ok || t.trimmed().isEmpty()) return;
+        QString error;
+        if (m_library->rename(path, t, &error).isEmpty()) QMessageBox::warning(this, "Rename clip", error);
     });
     menu.addAction(clip.favorite ? "Remove from favourites" : "Add to favourites", this, [=, this] {
         m_library->update(path, [](Clip &c) { c.favorite = !c.favorite; });

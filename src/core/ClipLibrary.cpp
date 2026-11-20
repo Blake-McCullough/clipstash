@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QLocale>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSaveFile>
 
 static const QStringList kExtensions = {"mp4", "mkv", "webm", "mov", "m4v", "avi", "ts", "flv"};
@@ -258,6 +259,55 @@ void ClipLibrary::update(const QString &path, const std::function<void(Clip &)> 
     saveSidecar(m_clips[row]);
     emit dataChanged(index(row), index(row));
     emit clipChanged(path);
+}
+
+QString ClipLibrary::safeFileName(const QString &title)
+{
+    QString n = title.trimmed();
+    // Characters Windows drives (NTFS/exFAT) refuse, plus control characters.
+    n.replace(QRegularExpression(R"([\\/:*?"<>|\x00-\x1f])"), "-");
+    n.replace(QRegularExpression(R"(\s+)"), " ");
+    while (n.endsWith('.') || n.endsWith(' ')) n.chop(1);  // also refused by Windows
+    while (n.startsWith('.')) n.remove(0, 1);              // would hide the file
+    if (n.isEmpty()) n = "Clip";
+    return n.left(150);
+}
+
+QString ClipLibrary::rename(const QString &path, const QString &title, QString *error)
+{
+    const int row = rowForPath(path);
+    const QString t = title.trimmed();
+    if (row < 0 || t.isEmpty()) {
+        if (error) *error = "Nothing to rename.";
+        return {};
+    }
+    const QFileInfo fi(path);
+    const QString ext = fi.suffix().isEmpty() ? QString("mp4") : fi.suffix();
+    const QString base = fi.absolutePath() + "/" + safeFileName(t);
+    QString target = base + "." + ext;
+    if (target != fi.absoluteFilePath())
+        for (int n = 2; QFileInfo::exists(target); ++n) target = QString("%1 (%2).%3").arg(base).arg(n).arg(ext);
+
+    if (target != fi.absoluteFilePath()) {
+        const QString oldSidecar = sidecarPath(path), oldThumb = thumbPath(path);
+        const QString oldStrip = filmstripPath(m_clips[row]);
+        if (!QFile::rename(path, target)) {
+            if (error) *error = "Could not rename the file. Is it open in another program?";
+            return {};
+        }
+        Clip &c = m_clips[row];
+        c.path = target;
+        QFile::rename(oldThumb, thumbPath(target));
+        QFile::rename(oldStrip, filmstripPath(c));
+        QFile::remove(oldSidecar);
+        m_thumbs.remove(path);
+    }
+    m_clips[row].title = t;
+    saveSidecar(m_clips[row]);
+    emit dataChanged(index(row), index(row));
+    if (target != fi.absoluteFilePath()) emit clipRenamed(fi.absoluteFilePath(), target);
+    emit clipChanged(target);
+    return target;
 }
 
 bool ClipLibrary::remove(const QString &path)

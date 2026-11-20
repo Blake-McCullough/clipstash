@@ -92,6 +92,7 @@ inline const char *SaveClip = "save-clip";
 inline const char *Save30 = "save-30";
 inline const char *Save60 = "save-60";
 inline const char *ToggleRecording = "toggle-recording";
+inline const char *ToggleFullRecording = "toggle-full-recording";
 QStringList all();
 QString label(const QString &id);
 }

@@ -44,7 +44,8 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     auto *back = new QPushButton(QString::fromUtf8("←  Clips"));
     back->setObjectName("flat");
     m_title = new QLineEdit;
-    m_title->setPlaceholderText("Clip title");
+    m_title->setPlaceholderText("Clip name");
+    m_title->setToolTip("Click to rename. The file is renamed too.");
     m_title->setStyleSheet("QLineEdit { font-size: 16px; font-weight: 600; background: transparent; border-color: transparent; }"
                            "QLineEdit:hover { border-color: #2a2f3a; } QLineEdit:focus { border-color: #7c5cff; background: #12141a; }");
     m_fav = new QPushButton;
@@ -54,6 +55,14 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     del->setObjectName("danger");
     header->addWidget(back);
     header->addWidget(m_title, 1);
+    auto *renameBtn = new QPushButton("Rename");
+    renameBtn->setProperty("kind", "flat");
+    renameBtn->setToolTip("Rename the clip and its file");
+    connect(renameBtn, &QPushButton::clicked, this, [this] {
+        m_title->setFocus();
+        m_title->selectAll();
+    });
+    header->addWidget(renameBtn);
     header->addWidget(m_fav);
     header->addWidget(del);
     root->addLayout(header);
@@ -190,9 +199,17 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     connect(m_title, &QLineEdit::editingFinished, this, [this] {
         const QString t = m_title->text().trimmed();
         if (t.isEmpty() || t == m_clip.title) return;
-        m_clip.title = t;
-        m_dirty = true;
-        commit();
+        commit();  // save pending trim/mix under the current name first
+        QString error;
+        if (m_library->rename(m_clip.path, t, &error).isEmpty()) {
+            m_title->setText(m_clip.title);
+            setJobIdle(error, true);
+        }
+    });
+    connect(m_library, &ClipLibrary::clipRenamed, this, [this](const QString &from, const QString &to) {
+        if (m_clip.path != from) return;
+        m_clip.path = to;
+        if (const Clip *c = m_library->clip(to)) m_clip.title = c->title;
     });
     connect(m_play, &QPushButton::clicked, this, &EditorPage::togglePlay);
     connect(m_player, &MpvWidget::clicked, this, &EditorPage::togglePlay);

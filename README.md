@@ -105,6 +105,21 @@ folder such as `/usr/bin`, your desktop asks for your password to do that. Then 
 Releases are built automatically: change the version in `CMakeLists.txt`, push to `main`,
 and GitHub Actions builds, tests and publishes the release for that version.
 
+## Full recordings
+
+**Start recording** (sidebar, tray menu, or a hotkey under Settings → Hotkeys) records
+everything until you press **Stop recording**, like a normal screen recording. The replay buffer
+keeps running underneath, so clipping still works while a recording is going. Recordings land in
+the clip folder as `Recording_<date>.mp4` and open in the editor like clips.
+`clipstash --toggle-full-recording` does the same from a script or compositor binding.
+
+## Renaming
+
+Rename a clip from the editor (**Rename** next to the title) or by right-clicking it in the
+library. The file on disk gets the new name too, so it shows up that way when you drag it into
+Discord. Characters Windows drives refuse (`: ? * " < > | \ /`) become `-` in the file name; the
+title keeps exactly what you typed.
+
 ## Clipping several times in a row
 
 Press the hotkey as often as you like: every press becomes its own full-length clip ending at

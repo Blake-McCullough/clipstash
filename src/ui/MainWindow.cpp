@@ -15,6 +15,7 @@
 #include <QFile>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
@@ -82,6 +83,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         else if (id == HotkeyIds::Save30) saveClip(30);
         else if (id == HotkeyIds::Save60) saveClip(60);
         else if (id == HotkeyIds::ToggleRecording) toggleRecorder();
+        else if (id == HotkeyIds::ToggleFullRecording) toggleFullRecording();
     });
     connect(&m_hotkeys, &HotkeyManager::statusChanged, m_settingsPage, &SettingsPage::setHotkeyStatus);
     m_hotkeys.apply(m_settings);
@@ -209,7 +211,11 @@ void MainWindow::buildUi()
     m_clipNow = new QPushButton("Clip now");
     m_clipNow->setObjectName("primary");
     m_recToggle = new QPushButton;
+    m_fullRec = new QPushButton("Start recording");
+    m_fullRec->setToolTip("Record everything from now until you press it again, like a normal screen recording.\n"
+                          "The replay buffer keeps running, so you can still clip at the same time.");
     rl->addWidget(m_clipNow);
+    rl->addWidget(m_fullRec);
     rl->addWidget(m_recToggle);
     sl->addWidget(recBox);
     root->addWidget(sidebar);
@@ -228,6 +234,26 @@ void MainWindow::buildUi()
     connect(m_navSettings, &QPushButton::clicked, this, [this] { showPage(PageSettings); });
     connect(m_clipNow, &QPushButton::clicked, this, [this] { saveClip(); });
     connect(m_recToggle, &QPushButton::clicked, this, &MainWindow::toggleRecorder);
+    connect(m_fullRec, &QPushButton::clicked, this, &MainWindow::toggleFullRecording);
+    connect(&m_recorder, &Recorder::fullRecordingChanged, this, [this](bool on) {
+        if (on) m_fullRecTick.start();
+        else m_fullRecTick.stop();
+        if (on && m_settings.soundOnSave) m_sound.play(m_settings.soundVolume);
+        updateRecorderUi();
+    });
+    m_fullRecTick.setInterval(1000);
+    connect(&m_fullRecTick, &QTimer::timeout, this, &MainWindow::updateRecorderUi);
+    connect(&m_recorder, &Recorder::recordingSaved, this, [this](const QString &path) {
+        QStringList names;
+        for (const AudioTrackCfg &t : std::as_const(m_recordedTracks))
+            if (!t.sources.trimmed().isEmpty()) names << t.name;
+        m_library.addFile(path, names);
+        const QDateTime at = QFileInfo(path).lastModified();
+        m_library.update(path, [&](Clip &c) {
+            if (c.title.isEmpty() || c.title.contains(':')) c.title = "Recording " + QLocale().toString(at, "d MMM, HH:mm");
+        });
+        notify("Recording saved", QFileInfo(path).fileName());
+    });
 
     connect(m_libraryPage, &LibraryPage::openRequested, this, &MainWindow::openClip);
     connect(m_libraryPage, &LibraryPage::shareRequested, this, &MainWindow::shareClip);
@@ -267,7 +293,8 @@ void MainWindow::buildTray()
     m_tray = new QSystemTrayIcon(Theme::appIcon(), this);
     auto *menu = new QMenu(this);
     m_trayClip = menu->addAction("Clip now", this, [this] { saveClip(); });
-    m_trayToggle = menu->addAction("Stop recorder", this, &MainWindow::toggleRecorder);
+    m_trayFullRec = menu->addAction("Start recording", this, &MainWindow::toggleFullRecording);
+    m_trayToggle = menu->addAction("Turn recorder off", this, &MainWindow::toggleRecorder);
     menu->addSeparator();
     menu->addAction("Open Clipstash", this, &MainWindow::showWindow);
     menu->addAction("Quit", this, &MainWindow::quit);
@@ -326,6 +353,17 @@ void MainWindow::toggleRecorder()
     m_folderWait.stop();
     if (m_recorder.isActive()) m_recorder.stop();
     else m_recorder.start(m_settings);
+}
+
+void MainWindow::toggleFullRecording()
+{
+    const bool stopping = m_recorder.isFullRecording();
+    QString why;
+    if (!m_recorder.toggleFullRecording(&why)) {
+        notify("Recording not started", why);
+        return;
+    }
+    if (stopping) notify("Recording stopped", "Saving it to your clip folder…");
 }
 
 void MainWindow::startRecorderWhenReady()
@@ -423,11 +461,26 @@ void MainWindow::updateRecorderUi()
     m_recDetail->setToolTip(st == S::Failed ? detail : QString());
     const bool active = m_recorder.isActive();
     m_clipNow->setEnabled(st == S::Running);
-    m_recToggle->setText(active ? "Stop recorder" : "Start recorder");
+    m_fullRec->setEnabled(st == S::Running);
+    if (m_recorder.isFullRecording()) {
+        m_fullRec->setText("Stop recording · " + formatDuration(m_recorder.fullRecordingMs() / 1000.0));
+        m_fullRec->setStyleSheet("QPushButton { color: #ff5c6c; border-color: #ff5c6c; font-weight: 600; }");
+        m_recText->setText("Recording everything");
+        m_recDetail->setText("Started " + formatDuration(m_recorder.fullRecordingMs() / 1000.0)
+                             + " ago. Clipping still works.");
+    } else {
+        m_fullRec->setText("Start recording");
+        m_fullRec->setStyleSheet({});
+    }
+    if (m_trayFullRec) {
+        m_trayFullRec->setText(m_recorder.isFullRecording() ? "Stop recording" : "Start recording");
+        m_trayFullRec->setEnabled(st == S::Running);
+    }
+    m_recToggle->setText(active ? "Turn recorder off" : "Turn recorder on");
     if (m_tray) {
         m_tray->setIcon(Theme::appIcon(st == S::Running));
         m_tray->setToolTip("Clipstash – " + text);
-        m_trayToggle->setText(active ? "Stop recorder" : "Start recorder");
+        m_trayToggle->setText(active ? "Turn recorder off" : "Turn recorder on");
         m_trayClip->setEnabled(st == S::Running);
     }
 }
@@ -447,6 +500,8 @@ void MainWindow::applySettings(const Settings &s)
     // auto split since it started are picked up on this save too.
     const bool differs = m_recorder.isActive() ? Recorder::buildArgs(m_settings) != m_recorder.runningArgs()
                                                : s.recorderConfigDiffers(old);
+    if (differs && m_recorder.isActive() && m_recorder.isFullRecording())
+        notify("Recording stopped", "The recorder restarted for the new settings, so the recording was ended and saved.");
     if (differs && m_recorder.isActive()) m_recorder.restart(m_settings);
     else if (differs && m_recorder.state() == Recorder::State::Failed) m_recorder.start(m_settings);
     if (old.hotkeys != s.hotkeys || old.hotkeyBackend != s.hotkeyBackend) m_hotkeys.apply(m_settings);
@@ -552,6 +607,7 @@ void MainWindow::handleCommand(const QString &command)
     if (cmd == "show") showWindow();
     else if (cmd == "save-clip") saveClip(parts.value(1).toInt());
     else if (cmd == "toggle-recording") toggleRecorder();
+    else if (cmd == "toggle-full-recording") toggleFullRecording();
     else if (cmd == "quit") quit();
 }
 

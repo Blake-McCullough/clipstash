@@ -50,6 +50,11 @@ Recorder::Recorder(QObject *parent) : QObject(parent)
         failCurrent("The recorder did not write the clip" + (detail.isEmpty() ? QString(".") : QString(": ") + detail));
     });
 
+    // If the recorder does not announce a finished recording, pick it up anyway.
+    m_recordingSweep.setSingleShot(true);
+    m_recordingSweep.setInterval(15000);
+    connect(&m_recordingSweep, &QTimer::timeout, this, [this] { collectRecordings(); });
+
     m_runningTimer.setSingleShot(true);
     m_runningTimer.setInterval(1500);
     connect(&m_runningTimer, &QTimer::timeout, this, [this] {
@@ -97,6 +102,7 @@ QStringList Recorder::buildArgs(const Settings &s)
     }
     a << "-v" << "no";
     if (!s.extraArgs.trimmed().isEmpty()) a << QProcess::splitCommand(s.extraArgs);
+    a << "-ro" << recordingDir(s.libraryDir);
     a << "-o" << incomingDir(s.libraryDir);
     return a;
 }
@@ -121,7 +127,8 @@ void Recorder::start(const Settings &s)
     m_stdoutBuf.clear();
     m_stopping = false;
 
-    if (!QDir().mkpath(s.libraryDir) || !QDir().mkpath(incomingDir(s.libraryDir))) {
+    if (!QDir().mkpath(s.libraryDir) || !QDir().mkpath(incomingDir(s.libraryDir))
+        || !QDir().mkpath(recordingDir(s.libraryDir))) {
         m_lastError = QString("Cannot create clip folder %1").arg(s.libraryDir);
         setState(State::Failed);
         emit failed(m_lastError);
@@ -163,7 +170,9 @@ void Recorder::start(const Settings &s)
     m_libraryDir = s.libraryDir;
     m_queue.clear();
     m_saving = false;
+    setFullRecording(false);
     recoverIncoming();
+    collectRecordings();
     log("start: " + s.recorderBinary + " " + m_args.join(' '));
     m_since.start();
     m_proc->start(s.recorderBinary, m_args);
@@ -359,6 +368,65 @@ void Recorder::finalize(const QString &raw, const Request &r)
     });
 }
 
+void Recorder::setFullRecording(bool on)
+{
+    if (m_fullRecording == on) return;
+    m_fullRecording = on;
+    if (on) {
+        m_fullSince.start();
+        m_fullStartedAt = QDateTime::currentDateTime();
+    }
+    emit fullRecordingChanged(on);
+}
+
+bool Recorder::toggleFullRecording(QString *why)
+{
+    auto refuse = [&](const QString &reason) {
+        if (why) *why = reason;
+        log("recording refused: " + reason);
+        return false;
+    };
+    if (!m_proc || m_proc->state() != QProcess::Running || !isActive())
+        return refuse("The recorder is not running.");
+    if (m_state == State::Starting || m_since.elapsed() < 2000)
+        return refuse("The recorder is still starting. Try again in a moment.");
+    if (::kill(pid_t(m_proc->processId()), SIGRTMIN) != 0) return refuse("Could not signal the recorder.");
+    const bool starting = !m_fullRecording;
+    if (starting) {
+        m_recordingSweep.stop();
+        setFullRecording(true);
+        log("full recording started");
+    } else {
+        log(QString("full recording stopped after %1 s").arg(m_fullSince.elapsed() / 1000));
+        setFullRecording(false);
+        m_recordingSweep.start();
+    }
+    return true;
+}
+
+void Recorder::collectRecordings(const QString &announcedPath)
+{
+    if (m_fullRecording || m_libraryDir.isEmpty()) return;  // still being written
+    QStringList files;
+    if (!announcedPath.isEmpty()) files << announcedPath;
+    const QFileInfoList found = QDir(recordingDir(m_libraryDir)).entryInfoList(
+        {"*.mp4", "*.mkv", "*.mov", "*.webm", "*.flv"}, QDir::Files, QDir::Time | QDir::Reversed);
+    for (const QFileInfo &fi : found)
+        if (!files.contains(fi.absoluteFilePath())) files << fi.absoluteFilePath();
+    for (const QString &f : std::as_const(files)) {
+        if (!QFileInfo::exists(f)) continue;
+        const QFileInfo fi(f);
+        const QDateTime at = fi.birthTime().isValid() ? fi.birthTime() : fi.lastModified();
+        const QString base = m_libraryDir + "/Recording_" + at.toString("yyyy-MM-dd_HH-mm-ss");
+        QString to = base + "." + fi.suffix();
+        for (int n = 2; QFileInfo::exists(to); ++n) to = QString("%1_%2.%3").arg(base).arg(n).arg(fi.suffix());
+        if (!moveFile(f, to)) continue;
+        log(QString("recording saved %1 (%2 MB)").arg(to).arg(QFileInfo(to).size() / (1024 * 1024)));
+        emit recordingSaved(to);
+    }
+    m_recordingSweep.stop();
+}
+
 void Recorder::onStdout()
 {
     m_stdoutBuf += m_proc->readAllStandardOutput();
@@ -368,6 +436,12 @@ void Recorder::onStdout()
         m_stdoutBuf.remove(0, nl + 1);
         // gpu-screen-recorder prints the saved file path on stdout.
         if (!line.startsWith('/') || !QFileInfo::exists(line)) continue;
+        if (QFileInfo(line).absolutePath() == QFileInfo(recordingDir(m_libraryDir)).absoluteFilePath()) {
+            // A full recording. Only move it once we have asked for it to stop,
+            // in case the recorder also announces the file when it begins.
+            if (!m_fullRecording) collectRecordings(line);
+            continue;
+        }
         if (!m_saving) {
             // Not ours (e.g. saved with gsr's own tools): keep it as it is.
             const QString to = uniqueClipPath(m_libraryDir, QDateTime::currentDateTime());
@@ -389,6 +463,11 @@ void Recorder::onFinished(int code, QProcess::ExitStatus status)
         m_queue.clear();
         m_saving = false;
         emit saveFailed("The recorder stopped before the clip was saved.");
+    }
+    if (m_fullRecording) {
+        // The recorder finishes the file when it stops; collect it.
+        setFullRecording(false);
+        QTimer::singleShot(500, this, [this] { collectRecordings(); });
     }
     m_runningTimer.stop();
     if (m_stopping) {

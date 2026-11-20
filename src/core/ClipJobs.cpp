@@ -11,6 +11,11 @@
 
 ClipJobs::ClipJobs(ClipLibrary *library, QObject *parent) : QObject(parent), m_library(library)
 {
+    connect(m_library, &ClipLibrary::clipRenamed, this, [this](const QString &from, const QString &to) {
+        if (m_clipPath == from) m_clipPath = to;
+        for (QString &q : m_queue)
+            if (q == from) q = to;
+    });
     // Lets tests (or a self-hosted instance) point uploads somewhere else.
     const QString apiBase = qEnvironmentVariable("CLIPSTASH_PIXELDRAIN_API");
     if (!apiBase.isEmpty()) m_uploader.setApiBase(apiBase);

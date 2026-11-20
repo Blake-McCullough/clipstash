@@ -7,13 +7,14 @@
 #include <QStringList>
 
 namespace HotkeyIds {
-QStringList all() { return {SaveClip, Save30, Save60, ToggleRecording}; }
+QStringList all() { return {SaveClip, Save30, Save60, ToggleFullRecording, ToggleRecording}; }
 QString label(const QString &id)
 {
     if (id == SaveClip) return "Save clip (whole buffer)";
     if (id == Save30) return "Save last 30 seconds";
     if (id == Save60) return "Save last 60 seconds";
-    if (id == ToggleRecording) return "Start / stop recorder";
+    if (id == ToggleRecording) return "Turn the replay buffer on / off";
+    if (id == ToggleFullRecording) return "Start / stop a full recording";
     return id;
 }
 }

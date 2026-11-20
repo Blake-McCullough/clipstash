@@ -31,6 +31,7 @@ public:
     void quit();
     // Start the recorder even if "record when opened" is off (used by autostart).
     void ensureRecording();
+    void toggleFullRecording();
 
 protected:
     void closeEvent(QCloseEvent *e) override;
@@ -85,6 +86,9 @@ private:
     QTimer m_folderWait;
     int m_folderWaitTries = 0;
     QTimer m_appWatch;
+    QTimer m_fullRecTick;
+    QPushButton *m_fullRec = nullptr;
+    QAction *m_trayFullRec = nullptr;
     QHash<QString, int> m_expectedLength;
     QList<AudioTrackCfg> m_recordedTracks;
     bool m_quitting = false;

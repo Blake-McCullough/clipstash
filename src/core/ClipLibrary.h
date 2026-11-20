@@ -35,6 +35,11 @@ public:
     void addFile(const QString &path, const QStringList &trackNames = {});
     void update(const QString &path, const std::function<void(Clip &)> &fn);
     bool remove(const QString &path);
+    // Renames the clip: its title and the file on disk (made safe for any
+    // drive, kept unique). Returns the new path, or an empty string and
+    // fills `error` on failure.
+    QString rename(const QString &path, const QString &title, QString *error = nullptr);
+    static QString safeFileName(const QString &title);
     QString filmstripPath(const Clip &c) const;
     QString metaDir() const;
 
@@ -44,6 +49,7 @@ public slots:
 signals:
     void clipAdded(const QString &path);
     void clipChanged(const QString &path);
+    void clipRenamed(const QString &oldPath, const QString &newPath);
 
 private:
     QString keyFor(const QString &path) const;

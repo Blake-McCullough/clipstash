@@ -331,6 +331,97 @@ while true; do sleep 0.1; done
         QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Stopped, 5000);
     }
 
+    void renameMovesFile()
+    {
+        QTemporaryDir dir;
+        for (const char *n : {"Replay_a.mp4", "Replay_b.mp4"}) {
+            QFile f(dir.filePath(n));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write("x");
+        }
+        ClipLibrary lib;
+        lib.setDirectory(dir.path());
+        QCOMPARE(lib.rowCount(), 2);
+        lib.update(dir.filePath("Replay_a.mp4"), [](Clip &c) { c.favorite = true; c.trimStart = 2; });
+        QSignalSpy renamed(&lib, &ClipLibrary::clipRenamed);
+
+        const QString p = lib.rename(dir.filePath("Replay_a.mp4"), "  Clutch 1v5: ace?  ");
+        QCOMPARE(p, dir.filePath("Clutch 1v5- ace-.mp4"));
+        QVERIFY(QFileInfo::exists(p));
+        QVERIFY(!QFileInfo::exists(dir.filePath("Replay_a.mp4")));
+        QCOMPARE(renamed.size(), 1);
+        const Clip *c = lib.clip(p);
+        QVERIFY(c);
+        QCOMPARE(c->title, QString("Clutch 1v5: ace?"));  // the title keeps what was typed
+        QVERIFY(c->favorite);
+        QCOMPARE(c->trimStart, 2.0);
+
+        // same name again: kept unique
+        const QString p2 = lib.rename(dir.filePath("Replay_b.mp4"), "Clutch 1v5: ace?");
+        QCOMPARE(p2, dir.filePath("Clutch 1v5- ace- (2).mp4"));
+        // renaming to its own name changes nothing on disk
+        QCOMPARE(lib.rename(p, "Clutch 1v5: ace?"), p);
+
+        // edits survive a fresh load from disk
+        ClipLibrary again;
+        again.setDirectory(dir.path());
+        QVERIFY(again.clip(p) && again.clip(p)->favorite && again.clip(p)->title == "Clutch 1v5: ace?");
+
+        QCOMPARE(ClipLibrary::safeFileName(" ..hidden. "), QString("hidden"));
+        QCOMPARE(ClipLibrary::safeFileName("a/b\\c|d"), QString("a-b-c-d"));
+        QCOMPARE(ClipLibrary::safeFileName("   "), QString("Clip"));
+    }
+
+    // Start/stop recording through the recorder, alongside the replay buffer.
+    void fullRecording()
+    {
+        if (!haveFfmpeg()) QSKIP("ffmpeg not installed");
+        QTemporaryDir dir;
+        const QString source = dir.filePath("source.mp4");
+        QCOMPARE(QProcess::execute("ffmpeg", {"-v", "error", "-y", "-f", "lavfi", "-i",
+            "testsrc=size=160x90:rate=10:duration=3", "-c:v", "libx264", "-preset", "ultrafast",
+            "-pix_fmt", "yuv420p", source}), 0);
+        const QString fake = dir.filePath("fake-gsr");
+        {
+            QFile f(fake);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QString(R"SH(#!/bin/bash
+ro=""; while [ $# -gt 0 ]; do [ "$1" = "-ro" ] && ro="$2"; shift; done
+rec=0
+toggle() {
+  if [ $rec = 0 ]; then rec=1; cp '%1' "$ro/Video_in_progress.mp4"; echo "$ro/Video_in_progress.mp4";
+  else rec=0; mv "$ro/Video_in_progress.mp4" "$ro/Video_done.mp4"; echo "$ro/Video_done.mp4"; fi
+}
+trap toggle RTMIN
+trap 'exit 0' INT TERM
+while true; do sleep 0.1; done
+)SH").arg(source).toUtf8());
+        }
+        QFile::setPermissions(fake, QFile::permissions(fake) | QFileDevice::ExeOwner);
+
+        Settings s;
+        s.recorderBinary = fake;
+        s.libraryDir = dir.filePath("Clips");
+        Recorder rec;
+        QSignalSpy saved(&rec, &Recorder::recordingSaved);
+        rec.start(s);
+        QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Running, 5000);
+        QTest::qWait(1000);
+        QVERIFY(rec.toggleFullRecording());
+        QVERIFY(rec.isFullRecording());
+        QTest::qWait(800);
+        QVERIFY(saved.isEmpty());  // a file announced at the start must not be moved
+        QVERIFY(rec.toggleFullRecording());
+        QVERIFY(!rec.isFullRecording());
+        QTRY_COMPARE_WITH_TIMEOUT(saved.size(), 1, 5000);
+        const QString out = saved[0][0].toString();
+        QVERIFY2(QFileInfo(out).fileName().startsWith("Recording_"), qPrintable(out));
+        QCOMPARE(QFileInfo(out).absolutePath(), QFileInfo(s.libraryDir).absoluteFilePath());
+        QVERIFY(QDir(Recorder::recordingDir(s.libraryDir)).entryList(QDir::Files).isEmpty());
+        rec.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Stopped, 5000);
+    }
+
     void needsRender()
     {
         Clip c = threeTrackClip();

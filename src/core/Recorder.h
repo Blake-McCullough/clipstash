@@ -26,6 +26,11 @@ public:
     static constexpr int kHeadroomSeconds = 20;
     // Raw saves land here (hidden) and are moved or cut into the library.
     static QString incomingDir(const QString &libraryDir) { return libraryDir + "/.clipstash/incoming"; }
+    // Full (start/stop) recordings are written here until they are finished.
+    static QString recordingDir(const QString &libraryDir) { return libraryDir + "/.clipstash/recording"; }
+
+    bool isFullRecording() const { return m_fullRecording; }
+    qint64 fullRecordingMs() const { return m_fullRecording ? m_fullSince.elapsed() : 0; }
     // Part of a saved file of `fileSeconds` to keep so the clip is `length`
     // long and ends `delaySeconds` before the end of the file.
     static QPair<double, double> cutWindow(double fileSeconds, double delaySeconds, int length);
@@ -51,6 +56,8 @@ public slots:
     // Presses are queued, so several quick presses each get their own full
     // clip. On refusal `why` says what is wrong (still starting...).
     bool saveReplay(int seconds = 0, QString *why = nullptr);
+    // Starts or stops a normal recording alongside the replay buffer.
+    bool toggleFullRecording(QString *why = nullptr);
 
 signals:
     void stateChanged(Recorder::State state);
@@ -58,6 +65,9 @@ signals:
     void clipSaved(const QString &path, int expectedSeconds, qint64 latencyMs);
     // A save was requested but no file arrived.
     void saveFailed(const QString &message);
+    void fullRecordingChanged(bool recording);
+    // A full recording was finished and moved into the clip folder.
+    void recordingSaved(const QString &path);
     void failed(const QString &message);
 
 private:
@@ -67,6 +77,8 @@ private:
     void dispatch();
     void failCurrent(const QString &message);
     void recoverIncoming();
+    void collectRecordings(const QString &announcedPath = {});
+    void setFullRecording(bool on);
 
     struct Request {
         QElapsedTimer pressed;
@@ -96,5 +108,9 @@ private:
     QList<Request> m_queue;
     Request m_current;
     bool m_saving = false;
+    bool m_fullRecording = false;
+    QElapsedTimer m_fullSince;
+    QDateTime m_fullStartedAt;
+    QTimer m_recordingSweep;
     QTimer m_saveWatch;
 };
