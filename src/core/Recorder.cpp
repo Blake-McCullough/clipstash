@@ -1,7 +1,10 @@
 #include "core/Recorder.h"
 
+#include "core/MediaTools.h"
+
 #include <QDateTime>
 #include <QDir>
+#include <QPointer>
 #include <QStandardPaths>
 #include <QFileInfo>
 
@@ -37,18 +40,14 @@ Recorder::Recorder(QObject *parent) : QObject(parent)
     // A save that never produces a file must not fail silently.
     m_saveWatch.setInterval(1000);
     connect(&m_saveWatch, &QTimer::timeout, this, [this] {
-        if (m_pending.isEmpty()) {
+        if (!m_saving) {
             m_saveWatch.stop();
             return;
         }
-        if (m_pending.first().requested.elapsed() < 30000) return;
-        m_pending.removeFirst();
+        if (m_current.dispatched.elapsed() < 30000) return;
         QStringList lines = QString::fromUtf8(m_stderrTail).split('\n', Qt::SkipEmptyParts);
         const QString detail = lines.isEmpty() ? QString() : lines.last().trimmed();
-        const QString msg = "The recorder did not write the clip"
-                            + (detail.isEmpty() ? QString(".") : QString(": ") + detail);
-        log("save failed: no file after 30 s" + (detail.isEmpty() ? QString() : " (" + detail + ")"));
-        emit saveFailed(msg);
+        failCurrent("The recorder did not write the clip" + (detail.isEmpty() ? QString(".") : QString(": ") + detail));
     });
 
     m_runningTimer.setSingleShot(true);
@@ -77,7 +76,7 @@ QStringList Recorder::buildArgs(const Settings &s)
     a << "-w" << (s.captureSource.isEmpty() ? QString("screen") : s.captureSource);
     a << "-c" << "mp4";
     a << "-f" << QString::number(qBound(1, s.fps, 500));
-    a << "-r" << QString::number(qBound(5, s.replaySeconds, 86400));
+    a << "-r" << QString::number(qBound(5, s.replaySeconds, 86400) + kHeadroomSeconds);
     a << "-k" << s.codec;
     a << "-ac" << s.audioCodec;
     if (s.bitrateMode == "cbr") {
@@ -98,7 +97,7 @@ QStringList Recorder::buildArgs(const Settings &s)
     }
     a << "-v" << "no";
     if (!s.extraArgs.trimmed().isEmpty()) a << QProcess::splitCommand(s.extraArgs);
-    a << "-o" << s.libraryDir;
+    a << "-o" << incomingDir(s.libraryDir);
     return a;
 }
 
@@ -122,7 +121,7 @@ void Recorder::start(const Settings &s)
     m_stdoutBuf.clear();
     m_stopping = false;
 
-    if (!QDir().mkpath(s.libraryDir)) {
+    if (!QDir().mkpath(s.libraryDir) || !QDir().mkpath(incomingDir(s.libraryDir))) {
         m_lastError = QString("Cannot create clip folder %1").arg(s.libraryDir);
         setState(State::Failed);
         emit failed(m_lastError);
@@ -139,12 +138,9 @@ void Recorder::start(const Settings &s)
             log("gsr: " + line);
             // A save the recorder reports as failed: say so now, not after the timeout.
             const QString low = line.toLower();
-            if (!m_pending.isEmpty() && low.contains("replay")
-                && (low.contains("fail") || low.contains("error") || low.contains("unable"))) {
-                m_pending.removeFirst();
-                log("save failed: " + line);
-                emit saveFailed("The recorder could not save the clip: " + line);
-            }
+            if (m_saving && low.contains("replay")
+                && (low.contains("fail") || low.contains("error") || low.contains("unable")))
+                failCurrent("The recorder could not save the clip: " + line);
         }
         m_stderrTail += chunk;
         if (m_stderrTail.size() > 4096) m_stderrTail = m_stderrTail.right(4096);
@@ -164,7 +160,10 @@ void Recorder::start(const Settings &s)
     setState(State::Starting);
     m_args = buildArgs(s);
     m_replaySeconds = qBound(5, s.replaySeconds, 86400);
-    m_pending.clear();
+    m_libraryDir = s.libraryDir;
+    m_queue.clear();
+    m_saving = false;
+    recoverIncoming();
     log("start: " + s.recorderBinary + " " + m_args.join(' '));
     m_since.start();
     m_proc->start(s.recorderBinary, m_args);
@@ -199,6 +198,13 @@ void Recorder::restart(const Settings &s)
     stop();
 }
 
+QPair<double, double> Recorder::cutWindow(double fileSeconds, double delaySeconds, int length)
+{
+    double end = fileSeconds - qMax(0.0, delaySeconds);
+    if (end <= 0) end = fileSeconds;
+    return {qMax(0.0, end - length), end};
+}
+
 bool Recorder::saveReplay(int seconds, QString *why)
 {
     auto refuse = [&](const QString &reason) {
@@ -212,26 +218,145 @@ bool Recorder::saveReplay(int seconds, QString *why)
     // (an early signal would kill it) and the buffer is empty anyway.
     if (m_state == State::Starting || m_since.elapsed() < 2000)
         return refuse("The recorder is still starting. Try again in a moment.");
+    if (m_queue.size() >= 20) return refuse("Too many clips are still being saved.");
 
-    int sig = SIGUSR1;
-    int window = m_replaySeconds;
-    if (seconds > 0) {
-        static const int windows[] = {10, 30, 60, 300, 600, 1800};
-        int best = 0;
-        for (int i = 1; i < 6; ++i)
-            if (qAbs(windows[i] - seconds) < qAbs(windows[best] - seconds)) best = i;
-        sig = SIGRTMIN + 1 + best;
-        window = qMin(window, windows[best]);
-    }
-    if (::kill(pid_t(m_proc->processId()), sig) != 0) return refuse("Could not signal the recorder.");
-
-    PendingSave p;
-    p.requested.start();
-    p.expectedSeconds = qMin(window, bufferedSeconds());
-    m_pending.append(p);
-    m_saveWatch.start();
-    log(QString("save requested: expect %1 s (buffer has %2 s)").arg(p.expectedSeconds).arg(bufferedSeconds()));
+    Request r;
+    r.pressed.start();
+    r.pressedAt = QDateTime::currentDateTime();
+    r.length = seconds > 0 ? qMin(seconds, m_replaySeconds) : m_replaySeconds;
+    r.expected = qMin(r.length, bufferedSeconds());
+    m_queue.append(r);
+    log(QString("clip requested: %1 s (buffer has %2 s, %3 waiting)")
+            .arg(r.length).arg(bufferedSeconds()).arg(m_queue.size() - 1 + (m_saving ? 1 : 0)));
+    if (!m_saving) dispatch();
     return true;
+}
+
+void Recorder::dispatch()
+{
+    while (!m_saving && !m_queue.isEmpty() && m_proc && m_proc->state() == QProcess::Running) {
+        Request r = m_queue.takeFirst();
+        r.delayMs = r.pressed.elapsed();
+        // Straight away and a length the recorder has a signal for: that file
+        // is already the clip. Otherwise save everything and cut it to the
+        // minute before the press.
+        static const int windows[] = {10, 30, 60, 300, 600, 1800};
+        int sig = SIGUSR1;
+        r.exact = false;
+        if (r.delayMs < 400) {
+            for (int i = 0; i < 6; ++i) {
+                if (windows[i] != r.length) continue;
+                sig = SIGRTMIN + 1 + i;
+                r.exact = true;
+            }
+        }
+        if (::kill(pid_t(m_proc->processId()), sig) != 0) {
+            log("save failed: could not signal the recorder");
+            emit saveFailed("Could not signal the recorder.");
+            continue;
+        }
+        r.dispatched.start();
+        m_current = r;
+        m_saving = true;
+        m_saveWatch.start();
+        log(QString("save sent: %1 s clip, %2 ms after the press%3")
+                .arg(r.length).arg(r.delayMs).arg(r.exact ? "" : ", will cut"));
+    }
+}
+
+void Recorder::failCurrent(const QString &message)
+{
+    if (!m_saving) return;
+    m_saving = false;
+    log("save failed: " + message);
+    emit saveFailed(message);
+    dispatch();
+}
+
+static QString uniqueClipPath(const QString &dir, const QDateTime &at)
+{
+    const QString base = dir + "/Replay_" + at.toString("yyyy-MM-dd_HH-mm-ss");
+    QString out = base + ".mp4";
+    for (int n = 2; QFileInfo::exists(out); ++n) out = QString("%1_%2.mp4").arg(base).arg(n);
+    return out;
+}
+
+static bool moveFile(const QString &from, const QString &to)
+{
+    if (QFile::rename(from, to)) return true;
+    // Different filesystem (should not happen, but never lose a clip).
+    if (!QFile::copy(from, to)) return false;
+    QFile::remove(from);
+    return true;
+}
+
+static void stampTime(const QString &path, const QDateTime &at)
+{
+    QFile f(path);
+    if (f.open(QIODevice::ReadWrite)) f.setFileTime(at, QFileDevice::FileModificationTime);
+}
+
+void Recorder::recoverIncoming()
+{
+    // Saves left behind by a crash: hand them over untouched.
+    const QDir in(incomingDir(m_libraryDir));
+    const QFileInfoList files = in.entryInfoList({"*.mp4"}, QDir::Files);
+    for (const QFileInfo &fi : files) {
+        if (fi.fileName().startsWith("cut-")) {
+            QFile::remove(fi.absoluteFilePath());
+            continue;
+        }
+        const QString to = uniqueClipPath(m_libraryDir, fi.lastModified());
+        if (moveFile(fi.absoluteFilePath(), to)) log("recovered " + to);
+    }
+}
+
+void Recorder::finalize(const QString &raw, const Request &r)
+{
+    const QString final = uniqueClipPath(m_libraryDir, r.pressedAt);
+    auto deliver = [this, r, final](const QString &how) {
+        stampTime(final, r.pressedAt);
+        log(QString("saved %1 (%2, %3 ms after the press, %4 MB)").arg(final, how).arg(r.pressed.elapsed())
+                .arg(QFileInfo(final).size() / (1024 * 1024)));
+        emit clipSaved(final, r.expected, r.pressed.elapsed());
+    };
+
+    if (r.exact) {
+        if (moveFile(raw, final)) deliver("as recorded");
+        else emit saveFailed("Could not move the clip into the clip folder.");
+        return;
+    }
+
+    QPointer<Recorder> self(this);
+    MediaTools::probe(raw, [self, raw, r, final, deliver](const ProbeResult &p) {
+        if (!self) return;
+        const double delay = r.delayMs / 1000.0;
+        if (!p.ok) {
+            if (moveFile(raw, final)) deliver("uncut, could not read it");
+            return;
+        }
+        const auto [start, end] = cutWindow(p.duration, delay, r.length);
+        if (start <= 0.05 && end >= p.duration - 0.05) {
+            if (moveFile(raw, final)) deliver("as recorded");
+            return;
+        }
+        const QString tmp = QFileInfo(raw).absolutePath() + "/cut-" + QFileInfo(raw).fileName();
+        auto *ff = new QProcess(self);
+        QObject::connect(ff, &QProcess::finished, self, [=](int code, QProcess::ExitStatus st) {
+            ff->deleteLater();
+            if (st == QProcess::NormalExit && code == 0 && QFileInfo(tmp).size() > 0 && moveFile(tmp, final)) {
+                QFile::remove(raw);
+                deliver(QString("cut %1-%2 s of %3 s").arg(start, 0, 'f', 1).arg(end, 0, 'f', 1).arg(p.duration, 0, 'f', 1));
+            } else {
+                QFile::remove(tmp);
+                if (moveFile(raw, final)) deliver("uncut, cutting failed");
+            }
+        });
+        // Stream copy: no quality loss, and only as slow as copying the file.
+        ff->start("ffmpeg", {"-y", "-v", "error", "-ss", QString::number(start, 'f', 3),
+                             "-to", QString::number(end, 'f', 3), "-i", raw, "-map", "0", "-c", "copy",
+                             "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", tmp});
+    });
 }
 
 void Recorder::onStdout()
@@ -243,23 +368,28 @@ void Recorder::onStdout()
         m_stdoutBuf.remove(0, nl + 1);
         // gpu-screen-recorder prints the saved file path on stdout.
         if (!line.startsWith('/') || !QFileInfo::exists(line)) continue;
-        int expected = bufferedSeconds();
-        qint64 latency = -1;
-        if (!m_pending.isEmpty()) {
-            const PendingSave p = m_pending.takeFirst();
-            expected = p.expectedSeconds;
-            latency = p.requested.elapsed();
+        if (!m_saving) {
+            // Not ours (e.g. saved with gsr's own tools): keep it as it is.
+            const QString to = uniqueClipPath(m_libraryDir, QDateTime::currentDateTime());
+            if (moveFile(line, to)) emit clipSaved(to, 0, -1);
+            continue;
         }
-        log(QString("saved %1 after %2 ms (%3 MB)").arg(line).arg(latency)
-                .arg(QFileInfo(line).size() / (1024 * 1024)));
-        emit clipSaved(line, expected, latency);
+        const Request r = m_current;
+        m_saving = false;
+        log(QString("recorder wrote %1 after %2 ms").arg(QFileInfo(line).fileName()).arg(r.dispatched.elapsed()));
+        finalize(line, r);
+        dispatch();  // the next queued press, while this one is being cut
     }
 }
 
 void Recorder::onFinished(int code, QProcess::ExitStatus status)
 {
     log(QString("exited: code %1%2").arg(code).arg(status == QProcess::CrashExit ? " (crashed)" : ""));
-    m_pending.clear();
+    if (m_saving || !m_queue.isEmpty()) {
+        m_queue.clear();
+        m_saving = false;
+        emit saveFailed("The recorder stopped before the clip was saved.");
+    }
     m_runningTimer.stop();
     if (m_stopping) {
         setState(State::Stopped);

@@ -105,6 +105,13 @@ folder such as `/usr/bin`, your desktop asks for your password to do that. Then 
 Releases are built automatically: change the version in `CMakeLists.txt`, push to `main`,
 and GitHub Actions builds, tests and publishes the release for that version.
 
+## Clipping several times in a row
+
+Press the hotkey as often as you like: every press becomes its own full-length clip ending at
+the moment you pressed it, even when the presses come seconds apart. The recorder can only
+write one clip at a time, so Clipstash queues the presses. It keeps 20 seconds more in the
+buffer than the clip length, and trims each saved clip back to the moment of its press.
+
 ## Troubleshooting
 
 - **Saving is slow, clips go missing or end early:** set **Settings → Capture → Buffer kept in**

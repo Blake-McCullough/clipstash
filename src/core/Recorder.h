@@ -1,8 +1,10 @@
 #pragma once
 #include "core/Settings.h"
 
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QList>
+#include <QPair>
 #include <QObject>
 #include <QProcess>
 #include <QTimer>
@@ -18,6 +20,15 @@ public:
     ~Recorder() override;
 
     static QStringList buildArgs(const Settings &s);
+    // The recorder keeps this much more than the clip length, so a save that
+    // has to wait for the previous one can still be cut to end at the moment
+    // the button was pressed.
+    static constexpr int kHeadroomSeconds = 20;
+    // Raw saves land here (hidden) and are moved or cut into the library.
+    static QString incomingDir(const QString &libraryDir) { return libraryDir + "/.clipstash/incoming"; }
+    // Part of a saved file of `fileSeconds` to keep so the clip is `length`
+    // long and ends `delaySeconds` before the end of the file.
+    static QPair<double, double> cutWindow(double fileSeconds, double delaySeconds, int length);
 
     State state() const { return m_state; }
     bool isActive() const { return m_state == State::Starting || m_state == State::Running; }
@@ -36,9 +47,9 @@ public slots:
     void start(const Settings &s);
     void stop();
     void restart(const Settings &s);
-    // seconds == 0 saves the whole buffer; otherwise the nearest window
-    // gpu-screen-recorder supports (10, 30, 60, 300, 600, 1800).
-    // On refusal `why` says what is wrong (still starting, not running...).
+    // Saves the last `seconds` (0 = the configured clip length) as of now.
+    // Presses are queued, so several quick presses each get their own full
+    // clip. On refusal `why` says what is wrong (still starting...).
     bool saveReplay(int seconds = 0, QString *why = nullptr);
 
 signals:
@@ -53,6 +64,20 @@ private:
     void setState(State s);
     void onStdout();
     void onFinished(int code, QProcess::ExitStatus status);
+    void dispatch();
+    void failCurrent(const QString &message);
+    void recoverIncoming();
+
+    struct Request {
+        QElapsedTimer pressed;
+        QDateTime pressedAt;
+        int length = 0;          // seconds wanted
+        int expected = 0;        // seconds the buffer actually held at the press
+        bool exact = false;      // signalled immediately with a matching window
+        qint64 delayMs = 0;      // press to signal
+        QElapsedTimer dispatched;
+    };
+    void finalize(const QString &raw, const Request &r);
 
     QProcess *m_proc = nullptr;
     State m_state = State::Stopped;
@@ -67,10 +92,9 @@ private:
     int m_replaySeconds = 0;
     QElapsedTimer m_since;
 
-    struct PendingSave {
-        QElapsedTimer requested;
-        int expectedSeconds;
-    };
-    QList<PendingSave> m_pending;
+    QString m_libraryDir;
+    QList<Request> m_queue;
+    Request m_current;
+    bool m_saving = false;
     QTimer m_saveWatch;
 };

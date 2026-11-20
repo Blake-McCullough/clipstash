@@ -12,6 +12,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QSet>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -45,9 +46,10 @@ private slots:
     {
         const QStringList a = Recorder::buildArgs(baseSettings());
         QCOMPARE(a.value(a.indexOf("-w") + 1), QString("screen"));
-        QCOMPARE(a.value(a.indexOf("-r") + 1), QString("60"));
+        // clip length plus headroom for presses that have to wait their turn
+        QCOMPARE(a.value(a.indexOf("-r") + 1), QString::number(60 + Recorder::kHeadroomSeconds));
         QCOMPARE(a.value(a.indexOf("-c") + 1), QString("mp4"));
-        QCOMPARE(a.last(), QString("/clips"));
+        QCOMPARE(a.last(), QString("/clips/.clipstash/incoming"));
         QCOMPARE(a.at(a.size() - 2), QString("-o"));
         // one -a per track, in order, so stream N in the file is track N
         QStringList audio;
@@ -241,6 +243,92 @@ private slots:
         const qint64 size = QFileInfo(out).size();
         QVERIFY2(size <= 2 * 1024 * 1024, qPrintable(QString::number(size)));
         QVERIFY2(size > 1024 * 1024, qPrintable(QString::number(size)));  // and it used the budget
+    }
+
+    void cutWindow()
+    {
+        // pressed as it was signalled: the last 60 s of an 80 s file
+        auto w = Recorder::cutWindow(80, 0, 60);
+        QCOMPARE(w.first, 20.0);
+        QCOMPARE(w.second, 80.0);
+        // signalled 7 s after the press: drop the 7 s that came after it
+        w = Recorder::cutWindow(80, 7, 60);
+        QCOMPARE(w.first, 13.0);
+        QCOMPARE(w.second, 73.0);
+        // buffer not full yet: keep what there is
+        w = Recorder::cutWindow(30, 2, 60);
+        QCOMPARE(w.first, 0.0);
+        QCOMPARE(w.second, 28.0);
+    }
+
+    // Three presses in about a second against a recorder that, like the real
+    // one, takes a while to save and ignores requests while it is saving.
+    // Every press must still give its own full-length clip.
+    void rapidSaves()
+    {
+        if (!haveFfmpeg()) QSKIP("ffmpeg not installed");
+        QTemporaryDir dir;
+        const QString source = dir.filePath("source.mp4");
+        QCOMPARE(QProcess::execute("ffmpeg", {"-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc=size=320x180:rate=30:duration=40",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=40",
+            "-c:v", "libx264", "-preset", "ultrafast", "-g", "30", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", source}), 0);
+
+        const QString fake = dir.filePath("fake-gsr");
+        {
+            QFile f(fake);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(QString(R"SH(#!/bin/bash
+out=""; while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done
+busy=0; n=0
+save() {
+  if [ $busy = 1 ]; then return; fi   # a save is running: ignored, like the real recorder
+  busy=1; sleep 1.5; n=$((n+1)); f="$out/Replay_$n.mp4"; cp '%1' "$f"; echo "$f"; busy=0
+}
+trap save USR1 RTMIN+1 RTMIN+2 RTMIN+3
+trap 'exit 0' INT TERM
+while true; do sleep 0.1; done
+)SH").arg(source).toUtf8());
+        }
+        QFile::setPermissions(fake, QFile::permissions(fake) | QFileDevice::ExeOwner);
+
+        Settings s;
+        s.recorderBinary = fake;
+        s.libraryDir = dir.filePath("Clips");
+        s.replaySeconds = 12;  // no matching signal, so every save is cut
+        Recorder rec;
+        QSignalSpy saved(&rec, &Recorder::clipSaved);
+        QSignalSpy failed(&rec, &Recorder::saveFailed);
+        rec.start(s);
+        QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Running, 5000);
+        QTest::qWait(1000);
+
+        for (int i = 0; i < 3; ++i) {
+            QVERIFY(rec.saveReplay());
+            QTest::qWait(400);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(saved.size() + failed.size() == 3, 30000);
+        QVERIFY2(failed.isEmpty(), failed.isEmpty() ? "" : qPrintable(failed[0][0].toString()));
+
+        QSet<QString> paths;
+        for (const auto &args : saved) {
+            const QString path = args[0].toString();
+            QVERIFY2(path.startsWith(s.libraryDir + "/Replay_"), qPrintable(path));
+            QVERIFY(!path.contains("/.clipstash/"));
+            paths.insert(path);
+            QProcess probe;
+            probe.start("ffprobe", {"-v", "error", "-print_format", "json", "-show_format", "-show_streams", path});
+            QVERIFY(probe.waitForFinished(10000));
+            const ProbeResult r = MediaTools::parseProbeJson(probe.readAllStandardOutput());
+            // full length; stream-copy cuts may start up to one keyframe (1 s) early
+            QVERIFY2(r.duration > 11.5 && r.duration < 13.6, qPrintable(QString::number(r.duration)));
+            QCOMPARE(r.audioTitles.size(), 1);
+        }
+        QCOMPARE(paths.size(), 3);
+        QVERIFY(QDir(Recorder::incomingDir(s.libraryDir)).entryList({"*.mp4"}, QDir::Files).isEmpty());
+        rec.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Stopped, 5000);
     }
 
     void needsRender()
