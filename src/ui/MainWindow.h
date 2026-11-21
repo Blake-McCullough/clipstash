@@ -87,6 +87,8 @@ private:
     int m_folderWaitTries = 0;
     QTimer m_appWatch;
     QTimer m_fullRecTick;
+    QString m_openAfterExport;  // source clip of an editor "Save as new clip"
+    QString m_pendingOpen;      // new clip to open once it has been probed
     QPushButton *m_fullRec = nullptr;
     QAction *m_trayFullRec = nullptr;
     QHash<QString, int> m_expectedLength;

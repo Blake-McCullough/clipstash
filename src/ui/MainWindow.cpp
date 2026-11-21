@@ -93,9 +93,32 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         m_libraryPage->setJobProgress(path, stage, f);
         m_editor->setJobProgress(path, stage, f);
     });
-    connect(&m_jobs, &ClipJobs::exported, this, [this](const QString &, const QString &out) {
+    connect(&m_jobs, &ClipJobs::exported, this, [this](const QString &src, const QString &out) {
         m_libraryPage->clearJobProgress();
         m_editor->setJobIdle("Saved as " + QFileInfo(out).fileName());
+        // "Save as new clip" from the editor: carry on in the new clip, as
+        // long as the user is still looking at the one it was made from.
+        const bool follow = m_openAfterExport == src && m_stack->currentWidget() == m_editor
+                            && m_editor->currentPath() == src;
+        m_openAfterExport.clear();
+        if (!follow) return;
+        m_pendingOpen = out;
+        const Clip *c = m_library.clip(out);
+        if (c && c->probed) {
+            m_pendingOpen.clear();
+            openClip(out);
+            m_editor->setJobIdle("Now editing the new clip. The original is unchanged.");
+        }
+    });
+    // A new clip opens once its length and audio tracks are known.
+    connect(&m_library, &ClipLibrary::clipChanged, this, [this](const QString &path) {
+        if (m_pendingOpen.isEmpty() || path != m_pendingOpen) return;
+        const Clip *c = m_library.clip(path);
+        if (!c || !c->probed) return;
+        m_pendingOpen.clear();
+        if (m_stack->currentWidget() != m_editor) return;  // user moved on meanwhile
+        openClip(path);
+        m_editor->setJobIdle("Now editing the new clip. The original is unchanged.");
     });
     connect(&m_jobs, &ClipJobs::shared, this, [this](const QString &, const QString &url) {
         m_libraryPage->clearJobProgress();
@@ -330,6 +353,7 @@ void MainWindow::showPage(int index)
 void MainWindow::openClip(const QString &path)
 {
     if (!m_library.clip(path)) return;
+    if (path != m_pendingOpen) m_pendingOpen.clear();
     showPage(PageEditor);
     m_editor->open(path);
     if (m_jobs.busy()) m_editor->setJobProgress(m_jobs.activeClip(), "Working", 0);
@@ -555,7 +579,7 @@ void MainWindow::exportClip(const QString &path)
         m_editor->setJobIdle("Another export or upload is still running.", true);
         return;
     }
-    m_jobs.exportClip(*c, m_settings);
+    if (m_jobs.exportClip(*c, m_settings)) m_openAfterExport = path;
 }
 
 void MainWindow::convertClips(const QStringList &paths)

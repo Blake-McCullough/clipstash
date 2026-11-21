@@ -92,7 +92,9 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
     } else if (enabled.isEmpty()) {
         a << "-an";
     } else if (enabled.size() == 1 && qAbs(clip.tracks[enabled[0]].volume - 1.0) < 0.01) {
-        a << "-map" << QString("0:a:%1").arg(enabled[0]);
+        a << "-map" << QString("0:a:%1").arg(enabled[0])
+          << "-metadata:s:a:0" << "title=" + clip.tracks[enabled[0]].name
+          << "-metadata:s:a:0" << "handler_name=" + clip.tracks[enabled[0]].name;
         if (o.targetVideoKbps > 0) a << "-c:a" << "aac" << "-b:a" << QString("%1k").arg(o.audioKbps);
         else a << "-c:a" << "copy";
     } else {
@@ -109,7 +111,13 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
             chains << QString("%1amix=inputs=%2:normalize=0:dropout_transition=0[aout]")
                           .arg(inputs).arg(enabled.size());
         a << "-filter_complex" << chains.join(';');
-        a << "-map" << "[aout]" << "-c:a" << "aac" << "-b:a" << QString("%1k").arg(o.audioKbps);
+        QStringList names;
+        for (int i : enabled) names << clip.tracks[i].name;
+        // Label the mixed track with what is in it, e.g. "Desktop + Microphone".
+        a << "-map" << "[aout]" << "-c:a" << "aac" << "-b:a" << QString("%1k").arg(o.audioKbps)
+          << "-metadata:s:a:0" << "title=" + names.join(" + ")
+          // MP4 keeps track names in handler_name rather than title.
+          << "-metadata:s:a:0" << "handler_name=" + names.join(" + ");
     }
 
     // video

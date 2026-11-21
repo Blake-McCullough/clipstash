@@ -468,6 +468,10 @@ while true; do sleep 0.1; done
         QCOMPARE(r.width, 1920);
         QCOMPARE(r.duration, 30.5);
         QCOMPARE(r.audioTitles, QStringList({"Desktop", ""}));
+        const QByteArray mp4 = R"({"streams":[{"codec_type":"video","width":64,"height":64},
+            {"codec_type":"audio","tags":{"handler_name":"Desktop + Microphone"}},
+            {"codec_type":"audio","tags":{"handler_name":"SoundHandler"}}],"format":{"duration":"1"}})";
+        QCOMPARE(MediaTools::parseProbeJson(mp4).audioTitles, QStringList({"Desktop + Microphone", ""}));
         QVERIFY(!MediaTools::parseProbeJson("not json").ok);
     }
 

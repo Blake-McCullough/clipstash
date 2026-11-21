@@ -23,7 +23,14 @@ ProbeResult parseProbeJson(const QByteArray &json)
             r.videoCodec = s["codec_name"].toString();
             if (r.duration <= 0) r.duration = s["duration"].toString().toDouble();
         } else if (type == "audio") {
-            r.audioTitles << s["tags"].toObject()["title"].toString();
+            const QJsonObject tags = s["tags"].toObject();
+            QString name = tags["title"].toString();
+            // MP4 stores track names as handler_name; ignore the generic defaults.
+            const QString handler = tags["handler_name"].toString().trimmed();
+            static const QStringList generic = {"SoundHandler", "Sound Handler", "Core Media Audio",
+                                                "GPAC ISO Audio Handler", "Stereo", ""};
+            if (name.isEmpty() && !generic.contains(handler, Qt::CaseInsensitive)) name = handler;
+            r.audioTitles << name;
         }
     }
     r.ok = r.width > 0 && r.duration > 0;
