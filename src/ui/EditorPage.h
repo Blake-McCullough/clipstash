@@ -24,6 +24,7 @@ public:
     void close();
     QString currentPath() const { return m_clip.path; }
     void commit();  // flush pending edits to the library
+    void pause();   // stop playback but keep the clip open where it was
 
     void setJobProgress(const QString &path, const QString &stage, double fraction);
     void setJobIdle(const QString &message = {}, bool error = false);

@@ -15,6 +15,7 @@
 #include <QFile>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QHideEvent>
 #include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
@@ -705,6 +706,14 @@ void MainWindow::quit()
     m_editor->commit();
     m_recorder.stop();
     qApp->quit();
+}
+
+void MainWindow::hideEvent(QHideEvent *e)
+{
+    // Closed to the tray (or hidden from the tray icon): nothing should keep
+    // playing where it can't be seen or stopped. Minimising is left alone.
+    if (!e->spontaneous() || !isMinimized()) m_editor->pause();
+    QMainWindow::hideEvent(e);
 }
 
 void MainWindow::closeEvent(QCloseEvent *e)

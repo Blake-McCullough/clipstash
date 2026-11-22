@@ -318,6 +318,11 @@ void EditorPage::open(const QString &path)
     setFocus();
 }
 
+void EditorPage::pause()
+{
+    m_player->setPaused(true);
+}
+
 void EditorPage::close()
 {
     commit();

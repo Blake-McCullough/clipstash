@@ -35,6 +35,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *e) override;
+    void hideEvent(QHideEvent *e) override;
 
 private:
     void buildUi();
