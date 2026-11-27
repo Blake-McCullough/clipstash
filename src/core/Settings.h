@@ -49,6 +49,9 @@ struct Settings {
     // The tracks actually recorded: the manual list, or the generated one.
     QList<AudioTrackCfg> effectiveTracks() const;
     static QList<AudioTrackCfg> autoSplitTracks(const QStringList &apps);
+    // Apps from --list-application-audio worth a track of their own
+    // (desktop sounds, speech and our own preview are left in "Other audio").
+    static QStringList usefulAudioApps(const QStringList &listed, const QStringList &known);
 
     // behaviour
     bool recordOnLaunch = true;

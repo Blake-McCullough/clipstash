@@ -1,5 +1,7 @@
 #include "ui/SettingsPage.h"
 
+#include "core/MediaTools.h"
+
 #include "ui/HotkeyEdit.h"
 
 #include <QCheckBox>
@@ -14,6 +16,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QPointer>
 #include <QSlider>
 #include <QFileInfo>
 #include <QSpinBox>
@@ -173,11 +176,15 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_autoSplit = new QCheckBox("Auto split: give every app that plays audio its own track");
     m_autoSplit->setToolTip("Clipstash watches which apps play sound and records each on its own track,\n"
                             "plus one track for everything else and one for your microphone.\n"
-                            "The first time a new app is noticed the replay buffer restarts once.");
+                            "A new app gets its track straight away if the recorder only just started,\n"
+                            "otherwise the sidebar offers to add it (that clears the replay buffer).");
     audio->addRow(m_autoSplit);
     m_autoSplitInfo = muted({});
-    m_autoSplitInfo->setMinimumWidth(560);
-    m_autoSplitInfo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
+    // Single line: a wrapping label in a row that is shown and hidden on the
+    // fly was given no height at all, so the list never appeared.
+    m_autoSplitInfo->setWordWrap(false);
+    m_autoSplitInfo->setTextInteractionFlags(Qt::NoTextInteraction);
+    m_autoSplitInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     auto *forget = new QPushButton("Forget apps");
     forget->setToolTip("Clear the list of apps that get their own track.");
     auto *autoRow = new QHBoxLayout;
@@ -187,6 +194,7 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     auto *autoHost = new QWidget;
     autoHost->setStyleSheet("background: transparent;");
     autoHost->setLayout(autoRow);
+    autoHost->setMinimumHeight(forget->sizeHint().height());
     audio->addRow(autoHost);
     connect(forget, &QPushButton::clicked, this, [this] {
         m_knownApps.clear();
@@ -214,6 +222,20 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_manualTrackWidgets = {trackHost, addTrack, split};
     m_autoSplitHost = autoHost;
     connect(m_autoSplit, &QCheckBox::toggled, this, &SettingsPage::updateAutoSplitUi);
+    // Ticking it picks up whatever is playing right now, so those apps get
+    // their tracks as soon as the settings are saved.
+    connect(m_autoSplit, &QCheckBox::toggled, this, [this](bool on) {
+        if (!on) return;
+        MediaTools::gsrList(m_base.recorderBinary, "--list-application-audio",
+                            [this, guard = QPointer<SettingsPage>(this)](const MediaTools::NamedList &apps) {
+            if (!guard) return;
+            QStringList listed;
+            for (const auto &e : apps) listed << e.first;
+            m_knownApps << Settings::usefulAudioApps(listed, m_knownApps);
+            while (m_knownApps.size() > 12) m_knownApps.removeLast();
+            updateAutoSplitUi();
+        });
+    });
 
     // --- hotkeys
     auto *keys = section(root, "Hotkeys", "Click a box and press the combination. Backspace clears it.");
@@ -595,15 +617,22 @@ void SettingsPage::updateStorageWarning()
     m_storageWarning->setVisible(!text.isEmpty());
 }
 
+void SettingsPage::setKnownApps(const QStringList &apps)
+{
+    m_knownApps = apps;
+    m_base.knownApps = apps;
+    updateAutoSplitUi();
+}
+
 void SettingsPage::updateAutoSplitUi()
 {
     const bool on = m_autoSplit->isChecked();
     for (QWidget *w : std::as_const(m_manualTrackWidgets)) w->setVisible(!on);
     m_autoSplitHost->setVisible(on);
     m_autoSplitInfo->setText(m_knownApps.isEmpty()
-        ? "No apps noticed yet. They are added as they play sound, and get their track the next time the recorder starts."
-        : "Own track: " + m_knownApps.join(", ") + ". Plus “Other audio” and “Microphone”. "
-          "Newly noticed apps get their track the next time the recorder starts.");
+        ? "No apps playing sound right now. Apps are added as they start playing."
+        : "Own track: " + m_knownApps.join(", ") + ". Plus “Other audio” and “Microphone”.");
+    m_autoSplitInfo->setToolTip(m_autoSplitInfo->text());
 }
 
 void SettingsPage::setUpdateState(const QString &status, const QString &button, bool enabled)

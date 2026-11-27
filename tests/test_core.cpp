@@ -190,6 +190,14 @@ private slots:
         QVERIFY(Recorder::buildArgs(s).contains("app:firefox"));
     }
 
+    void autoSplitFilter()
+    {
+        const QStringList listed = {"spotify", "plasmashell", "Clipstash", "Discord", "  ", "kwin_wayland",
+                                    "SPOTIFY", "speech-dispatcher", "MarvelRivals.exe"};
+        QCOMPARE(Settings::usefulAudioApps(listed, {}), QStringList({"spotify", "Discord", "MarvelRivals.exe"}));
+        QCOMPARE(Settings::usefulAudioApps(listed, {"discord"}), QStringList({"spotify", "MarvelRivals.exe"}));
+    }
+
     void discordBudget()
     {
         Settings s = baseSettings();

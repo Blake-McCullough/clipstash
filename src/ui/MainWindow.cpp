@@ -197,7 +197,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     setupUpdater();
 
     // Auto split: notice apps that start playing sound and give them a track.
-    m_appWatch.setInterval(10000);
+    m_appWatch.setInterval(5000);
     connect(&m_appWatch, &QTimer::timeout, this, &MainWindow::checkForNewAudioApps);
     m_appWatch.start();
 }
@@ -270,6 +270,18 @@ void MainWindow::buildUi()
     m_fullRec = new QPushButton("Start recording");
     m_fullRec->setToolTip("Record everything from now until you press it again, like a normal screen recording.\n"
                           "The replay buffer keeps running, so you can still clip at the same time.");
+    m_splitNote = new QLabel;
+    m_splitNote->setObjectName("muted");
+    m_splitNote->setStyleSheet("font-size: 12px;");
+    m_splitNote->setWordWrap(true);
+    m_splitNote->hide();
+    m_splitNow = new QPushButton("Split now");
+    m_splitNow->setToolTip("Restart the recorder so these apps get their own tracks.\n"
+                           "The last minute in the replay buffer is cleared, so clip it first if you need it.");
+    m_splitNow->hide();
+    connect(m_splitNow, &QPushButton::clicked, this, &MainWindow::applyPendingSplit);
+    rl->addWidget(m_splitNote);
+    rl->addWidget(m_splitNow);
     rl->addWidget(m_clipNow);
     rl->addWidget(m_fullRec);
     rl->addWidget(m_recToggle);
@@ -461,25 +473,36 @@ void MainWindow::checkForNewAudioApps()
     MediaTools::gsrList(m_settings.recorderBinary, "--list-application-audio",
                         [this](const MediaTools::NamedList &apps) {
         if (!m_settings.autoSplitAudio) return;
-        QStringList added;
-        for (const auto &entry : apps) {
-            const QString name = entry.first.trimmed();
-            // Our own chime and the recorder are not interesting.
-            if (name.isEmpty() || name.compare("Clipstash", Qt::CaseInsensitive) == 0
-                || name.contains("gpu-screen-recorder", Qt::CaseInsensitive) || name.contains('|'))
-                continue;
-            if (m_settings.knownApps.contains(name, Qt::CaseInsensitive)) continue;
-            if (m_settings.knownApps.size() >= 12) break;  // keep clips to a sane number of tracks
-            m_settings.knownApps << name;
-            added << name;
-        }
+        QStringList listed;
+        for (const auto &entry : apps) listed << entry.first;
+        QStringList added = Settings::usefulAudioApps(listed, m_settings.knownApps);
+        while (m_settings.knownApps.size() + added.size() > 12 && !added.isEmpty()) added.removeLast();
         if (added.isEmpty()) return;
-        // Restarting the recorder would throw away the replay buffer, so the
-        // new tracks are used from the next time the recorder starts.
-        Recorder::log("auto split: noticed " + added.join(", ") + " (used from next recorder start)");
+        m_settings.knownApps << added;
         m_settings.save();
-        m_settingsPage->setSettings(m_settings);
+        m_settingsPage->setKnownApps(m_settings.knownApps);
+        Recorder::log("auto split: noticed " + added.join(", ") + " (playing: " + listed.join(", ") + ")");
+
+        // The recorder needs a restart to add tracks, which empties the replay
+        // buffer. Right after it started there is nothing to lose, so do it
+        // now; otherwise ask, so a clip is never thrown away silently.
+        if (m_recorder.bufferedSeconds() < 20 && !m_recorder.isFullRecording()) {
+            Recorder::log("auto split: buffer nearly empty, adding tracks now");
+            m_recorder.restart(m_settings);
+            return;
+        }
+        m_pendingSplitApps << added;
+        updateRecorderUi();
     });
+}
+
+void MainWindow::applyPendingSplit()
+{
+    if (m_pendingSplitApps.isEmpty()) return;
+    m_pendingSplitApps.clear();
+    Recorder::log("auto split: adding tracks now (asked)");
+    m_recorder.restart(m_settings);
+    updateRecorderUi();
 }
 
 void MainWindow::updateRecorderUi()
@@ -493,8 +516,8 @@ void MainWindow::updateRecorderUi()
         dot = Theme::Bad;
         text = "Recording";
         detail = QString("Keeping the last %1 · %2 audio track%3")
-                     .arg(formatDuration(m_settings.replaySeconds)).arg(m_settings.effectiveTracks().size())
-                     .arg(m_settings.effectiveTracks().size() == 1 ? "" : "s");
+                     .arg(formatDuration(m_settings.replaySeconds)).arg(m_recordedTracks.size())
+                     .arg(m_recordedTracks.size() == 1 ? "" : "s");
         break;
     case S::Starting:
         dot = Theme::Warn;
@@ -518,6 +541,14 @@ void MainWindow::updateRecorderUi()
     m_recDetail->setToolTip(st == S::Failed ? detail : QString());
     const bool active = m_recorder.isActive();
     m_clipNow->setEnabled(st == S::Running);
+    // A restart for any reason picks the new apps up, so drop the prompt then.
+    if (st != S::Running) m_pendingSplitApps.clear();
+    const bool askSplit = !m_pendingSplitApps.isEmpty() && st == S::Running;
+    m_splitNote->setVisible(askSplit);
+    m_splitNow->setVisible(askSplit);
+    if (askSplit)
+        m_splitNote->setText(m_pendingSplitApps.join(", ") + " started playing. It gets its own track after "
+                             "the recorder restarts, which clears the last minute.");
     m_fullRec->setEnabled(st == S::Running);
     if (m_recorder.isFullRecording()) {
         m_fullRec->setText("Stop recording · " + formatDuration(m_recorder.fullRecordingMs() / 1000.0));

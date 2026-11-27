@@ -24,6 +24,7 @@ public:
     Settings settings() const;
     void setHotkeyStatus(const QString &status);
     void setUpdateState(const QString &status, const QString &button, bool enabled);
+    void setKnownApps(const QStringList &apps);  // auto split list changed outside the page
     void refreshDevices();
 
 signals:

@@ -8,6 +8,11 @@
 #include "core/Settings.h"
 #include <unistd.h>
 #include <QDirIterator>
+#include <QEvent>
+#include <QScrollBar>
+#include <QAbstractSlider>
+#include <QAbstractSpinBox>
+#include <QComboBox>
 #include <QFile>
 #include <QFileInfo>
 #include <QStandardPaths>
@@ -92,6 +97,34 @@ static int diagnose()
     _exit(0);  // skip teardown: the library has background probes in flight
 }
 
+// Scrolling a page should scroll the page, not change whatever drop-down,
+// number box or slider happens to pass under the mouse. Those only take the
+// wheel once clicked (focused).
+class WheelGuard : public QObject {
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject *obj, QEvent *e) override
+    {
+        if (e->type() == QEvent::Polish) {
+            // Wheel focus would grab focus on the first wheel tick, before we
+            // get to see the event; click focus is enough for these.
+            auto *w = qobject_cast<QWidget *>(obj);
+            if (w && w->focusPolicy() == Qt::WheelFocus
+                && (qobject_cast<QComboBox *>(w) || qobject_cast<QAbstractSpinBox *>(w) || qobject_cast<QAbstractSlider *>(w)))
+                w->setFocusPolicy(Qt::StrongFocus);
+            return false;
+        }
+        if (e->type() != QEvent::Wheel) return false;
+        auto *w = qobject_cast<QWidget *>(obj);
+        if (!w || w->hasFocus()) return false;
+        if (!qobject_cast<QComboBox *>(w) && !qobject_cast<QAbstractSpinBox *>(w) && !qobject_cast<QAbstractSlider *>(w))
+            return false;
+        if (qobject_cast<QScrollBar *>(w)) return false;
+        e->ignore();  // hand it on to the page so it scrolls
+        return true;
+    }
+};
+
 int main(int argc, char **argv)
 {
     // Set before the application object exists so Qt's own portal
@@ -104,6 +137,7 @@ int main(int argc, char **argv)
     QCoreApplication::setOrganizationName("clipstash");
     QCoreApplication::setApplicationName("clipstash");
     QCoreApplication::setApplicationVersion(CLIPSTASH_VERSION);
+    app.installEventFilter(new WheelGuard(&app));
     app.setQuitOnLastWindowClosed(false);
     std::setlocale(LC_NUMERIC, "C");
 

@@ -57,6 +57,7 @@ private:
     void setupUpdater();
     void startRecorderWhenReady();
     void checkForNewAudioApps();
+    void applyPendingSplit();
     void restartApp();
 
     Settings m_settings;
@@ -88,6 +89,9 @@ private:
     QTimer m_folderWait;
     int m_folderWaitTries = 0;
     QTimer m_appWatch;
+    QStringList m_pendingSplitApps;
+    QLabel *m_splitNote = nullptr;
+    QPushButton *m_splitNow = nullptr;
     QTimer m_fullRecTick;
     QString m_openAfterExport;  // source clip of an editor "Save as new clip"
     QString m_pendingOpen;      // new clip to open once it has been probed

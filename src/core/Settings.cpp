@@ -49,6 +49,22 @@ QList<AudioTrackCfg> Settings::autoSplitTracks(const QStringList &apps)
     return tracks;
 }
 
+QStringList Settings::usefulAudioApps(const QStringList &listed, const QStringList &known)
+{
+    static const QStringList ignore = {"clipstash", "gpu-screen-recorder", "plasmashell", "kwin_wayland", "kwin_x11",
+                                       "kded6", "kded5", "speech-dispatcher", "speech-dispatcher-dummy", "xdg-desktop-portal",
+                                       "pipewire", "wireplumber", "pulseaudio", "pavucontrol", "gnome-shell",
+                                       "kmix", "Plasma PA", "KDE Connect", "notify-send", "canberra-gtk-play"};
+    QStringList out;
+    for (const QString &raw : listed) {
+        const QString name = raw.trimmed();
+        if (name.isEmpty() || name.contains('|') || ignore.contains(name, Qt::CaseInsensitive)) continue;
+        if (known.contains(name, Qt::CaseInsensitive) || out.contains(name, Qt::CaseInsensitive)) continue;
+        out << name;
+    }
+    return out;
+}
+
 QList<AudioTrackCfg> Settings::effectiveTracks() const
 {
     return autoSplitAudio ? autoSplitTracks(knownApps) : audioTracks;
