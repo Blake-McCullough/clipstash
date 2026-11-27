@@ -19,6 +19,10 @@
 #include <QScrollBar>
 #include <QShortcut>
 #include <QUrl>
+#include <QItemSelection>
+#include <QLocale>
+#include <QTimer>
+#include <QSettings>
 #include <QVBoxLayout>
 
 // Qt 6.10 replaced invalidateFilter() with a begin/end pair.
@@ -62,6 +66,88 @@ bool ClipFilter::filterAcceptsRow(int row, const QModelIndex &) const
         || c.fileName().contains(m_query, Qt::CaseInsensitive);
 }
 
+ClipGroups::ClipGroups(QAbstractItemModel *clips, QObject *parent) : QAbstractListModel(parent), m_clips(clips)
+{
+    for (auto sig : {&QAbstractItemModel::rowsInserted, &QAbstractItemModel::rowsRemoved})
+        connect(clips, sig, this, &ClipGroups::rebuild);
+    connect(clips, &QAbstractItemModel::modelReset, this, &ClipGroups::rebuild);
+    connect(clips, &QAbstractItemModel::layoutChanged, this, &ClipGroups::rebuild);
+    connect(clips, &QAbstractItemModel::dataChanged, this,
+            [this](const QModelIndex &a, const QModelIndex &b, const QList<int> &roles) {
+        for (int r = a.row(); r <= b.row() && r < m_rowOfSource.size(); ++r) {
+            const QModelIndex i = index(m_rowOfSource[r]);
+            emit dataChanged(i, i, roles);
+        }
+    });
+    rebuild();
+}
+
+void ClipGroups::setGrouped(bool on)
+{
+    if (m_grouped == on) return;
+    m_grouped = on;
+    rebuild();
+}
+
+QString ClipGroups::dayLabel(const QDate &day, const QDate &today)
+{
+    const qint64 ago = day.daysTo(today);
+    if (ago == 0) return "Today";
+    if (ago == 1) return "Yesterday";
+    if (ago > 1 && ago < 7) return QLocale().toString(day, "dddd");
+    if (day.year() == today.year()) return QLocale().toString(day, "dddd d MMMM");
+    return QLocale().toString(day, "d MMMM yyyy");
+}
+
+void ClipGroups::rebuild()
+{
+    beginResetModel();
+    m_rows.clear();
+    const int n = m_clips->rowCount();
+    m_rowOfSource.resize(n);
+    int header = -1;
+    for (int r = 0; r < n; ++r) {
+        if (m_grouped) {
+            const QDate day = m_clips->index(r, 0).data(ClipLibrary::ClipRole).value<Clip>().created.date();
+            if (header < 0 || m_rows[header].day != day) {
+                header = int(m_rows.size());
+                m_rows.append({-1, day, 0});
+            }
+            ++m_rows[header].count;
+        }
+        m_rowOfSource[r] = int(m_rows.size());
+        m_rows.append({r, {}, 0});
+    }
+    endResetModel();
+}
+
+int ClipGroups::rowCount(const QModelIndex &parent) const
+{
+    return parent.isValid() ? 0 : int(m_rows.size());
+}
+
+QVariant ClipGroups::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid() || index.row() >= m_rows.size()) return {};
+    const Row &row = m_rows[index.row()];
+    if (row.source >= 0) {
+        if (role == HeaderRole) return false;
+        return m_clips->index(row.source, 0).data(role);
+    }
+    switch (role) {
+    case HeaderRole: return true;
+    case HeaderCountRole: return row.count;
+    case Qt::DisplayRole: return dayLabel(row.day, QDate::currentDate());
+    }
+    return {};
+}
+
+Qt::ItemFlags ClipGroups::flags(const QModelIndex &index) const
+{
+    if (!index.isValid() || index.row() >= m_rows.size()) return Qt::NoItemFlags;
+    return m_rows[index.row()].source >= 0 ? (Qt::ItemIsEnabled | Qt::ItemIsSelectable) : Qt::NoItemFlags;
+}
+
 LibraryPage::LibraryPage(ClipLibrary *library, QWidget *parent) : QWidget(parent), m_library(library)
 {
     auto *root = new QVBoxLayout(this);
@@ -88,6 +174,15 @@ LibraryPage::LibraryPage(ClipLibrary *library, QWidget *parent) : QWidget(parent
         group->addButton(chip, id++);
         top->addWidget(chip);
     }
+    QSettings prefs;
+    auto *byDay = new QPushButton("By day");
+    byDay->setObjectName("chip");
+    byDay->setCheckable(true);
+    byDay->setChecked(prefs.value("library/groupByDay", true).toBool());
+    byDay->setCursor(Qt::PointingHandCursor);
+    byDay->setToolTip("Group clips under the day they were recorded");
+    top->addSpacing(8);
+    top->addWidget(byDay);
     auto *search = new QLineEdit;
     search->setPlaceholderText("Search clips");
     search->setClearButtonEnabled(true);
@@ -99,15 +194,19 @@ LibraryPage::LibraryPage(ClipLibrary *library, QWidget *parent) : QWidget(parent
 
     m_filter = new ClipFilter(this);
     m_filter->setSourceModel(library);
+    m_groups = new ClipGroups(m_filter, this);
+    m_groups->setGrouped(byDay->isChecked());
     m_delegate = new ClipDelegate(this);
 
     m_view = new QListView;
-    m_view->setModel(m_filter);
+    m_view->setModel(m_groups);
     m_view->setItemDelegate(m_delegate);
     m_view->setViewMode(QListView::IconMode);
     m_view->setResizeMode(QListView::Adjust);
     m_view->setMovement(QListView::Static);
-    m_view->setUniformItemSizes(true);
+    m_view->setUniformItemSizes(false);  // day headings span the full width
+    m_view->setWrapping(true);
+    m_view->setFlow(QListView::LeftToRight);
     m_view->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_view->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
     m_view->verticalScrollBar()->setSingleStep(28);
@@ -128,6 +227,37 @@ LibraryPage::LibraryPage(ClipLibrary *library, QWidget *parent) : QWidget(parent
         emit openRequested(i.data(ClipLibrary::PathRole).toString());
     });
     connect(m_view, &QListView::customContextMenuRequested, this, &LibraryPage::showContextMenu);
+
+    // Regrouping resets the model; keep the selection and scroll position.
+    connect(m_groups, &QAbstractItemModel::modelAboutToBeReset, this, [this] {
+        m_keepSelection = selectedPaths();
+        m_keepScroll = m_view->verticalScrollBar()->value();
+    });
+    connect(m_groups, &QAbstractItemModel::modelReset, this, [this] {
+        if (!m_keepSelection.isEmpty()) {
+            QItemSelection sel;
+            for (int r = 0; r < m_groups->rowCount(); ++r) {
+                const QModelIndex i = m_groups->index(r);
+                if (m_keepSelection.contains(i.data(ClipLibrary::PathRole).toString())) sel.select(i, i);
+            }
+            m_view->selectionModel()->select(sel, QItemSelectionModel::ClearAndSelect);
+        }
+        const int scroll = m_keepScroll;
+        QTimer::singleShot(0, m_view, [this, scroll] { m_view->verticalScrollBar()->setValue(scroll); });
+    });
+    connect(byDay, &QPushButton::toggled, this, [this](bool on) {
+        QSettings().setValue("library/groupByDay", on);
+        m_groups->setGrouped(on);
+    });
+    // "Today" becomes "Yesterday" at midnight.
+    auto *midnight = new QTimer(this);
+    midnight->setInterval(60 * 1000);
+    connect(midnight, &QTimer::timeout, this, [this] {
+        if (m_today == QDate::currentDate()) return;
+        m_today = QDate::currentDate();
+        m_view->viewport()->update();
+    });
+    midnight->start();
 
     auto *del = new QShortcut(QKeySequence::Delete, m_view);
     del->setContext(Qt::WidgetShortcut);
@@ -166,8 +296,10 @@ void LibraryPage::updateSummary()
 QStringList LibraryPage::selectedPaths() const
 {
     QStringList paths;
-    for (const QModelIndex &i : m_view->selectionModel()->selectedIndexes())
-        paths << i.data(ClipLibrary::PathRole).toString();
+    for (const QModelIndex &i : m_view->selectionModel()->selectedIndexes()) {
+        const QString p = i.data(ClipLibrary::PathRole).toString();
+        if (!p.isEmpty()) paths << p;
+    }
     return paths;
 }
 

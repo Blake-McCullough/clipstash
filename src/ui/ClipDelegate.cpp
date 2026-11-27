@@ -1,15 +1,24 @@
 #include "ui/ClipDelegate.h"
+#include "ui/LibraryPage.h"
 
 #include "core/Clip.h"
 #include "core/ClipLibrary.h"
 #include "ui/Theme.h"
 
 #include <QLocale>
+#include <QAbstractItemView>
 #include <QPainter>
 #include <QPainterPath>
 
-QSize ClipDelegate::sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const
+QSize ClipDelegate::sizeHint(const QStyleOptionViewItem &opt, const QModelIndex &index) const
 {
+    if (index.data(ClipGroups::HeaderRole).toBool()) {
+        // As wide as the view, so the heading sits on a row of its own.
+        int w = 600;
+        if (const auto *view = qobject_cast<const QAbstractItemView *>(opt.widget))
+            w = view->viewport()->width() - 2;
+        return {qMax(CardW + 14, w), index.row() == 0 ? 36 : 50};
+    }
     return {CardW + 14, CardH + 14};
 }
 
@@ -24,6 +33,27 @@ static void badge(QPainter *p, const QRectF &r, const QString &text, const QColo
 
 void ClipDelegate::paint(QPainter *p, const QStyleOptionViewItem &opt, const QModelIndex &index) const
 {
+    if (index.data(ClipGroups::HeaderRole).toBool()) {
+        p->save();
+        QRect r = opt.rect.adjusted(7, 0, -7, -4);
+        QFont f = opt.font;
+        f.setPixelSize(15);
+        f.setWeight(QFont::DemiBold);
+        p->setFont(f);
+        p->setPen(Theme::Text);
+        const QString label = index.data(Qt::DisplayRole).toString();
+        p->drawText(r, Qt::AlignLeft | Qt::AlignBottom, label);
+        const int lw = QFontMetrics(f).horizontalAdvance(label);
+        QFont small = opt.font;
+        small.setPixelSize(12);
+        p->setFont(small);
+        p->setPen(Theme::Muted);
+        const int n = index.data(ClipGroups::HeaderCountRole).toInt();
+        p->drawText(r.adjusted(lw + 10, 0, 0, -1), Qt::AlignLeft | Qt::AlignBottom,
+                    QString("%1 clip%2").arg(n).arg(n == 1 ? "" : "s"));
+        p->restore();
+        return;
+    }
     const Clip c = index.data(ClipLibrary::ClipRole).value<Clip>();
     const QPixmap thumb = index.data(ClipLibrary::ThumbRole).value<QPixmap>();
     const bool hover = opt.state & QStyle::State_MouseOver;
