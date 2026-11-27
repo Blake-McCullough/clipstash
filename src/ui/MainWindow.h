@@ -50,6 +50,7 @@ private:
     void shareClip(const QString &path);
     void exportClip(const QString &path, const QString &name = {}, bool openWhenDone = false);
     void convertClips(const QStringList &paths);
+    void copyDiscordFiles();
     void notify(const QString &title, const QString &text);
     void writeAutostart(bool enabled);
     void showWindow();
@@ -90,6 +91,8 @@ private:
     QTimer m_fullRecTick;
     QString m_openAfterExport;  // source clip of an editor "Save as new clip"
     QString m_pendingOpen;      // new clip to open once it has been probed
+    QString m_pendingOpenNote;  // status shown when it opens
+    QStringList m_discordFiles; // Discord copies waiting to go on the clipboard
     QPushButton *m_fullRec = nullptr;
     QAction *m_trayFullRec = nullptr;
     QHash<QString, int> m_expectedLength;

@@ -221,8 +221,8 @@ void LibraryPage::showContextMenu(const QPoint &pos)
     menu.addAction(many > 1 ? QString("Export %1 clips for sharing (H.264 copies)").arg(many)
                             : QString("Export for sharing (H.264 copy)"),
                    this, [=, this] { emit exportRequested(selection); });
-    menu.addAction(many > 1 ? QString("Export %1 clips for Discord (small files)").arg(many)
-                            : QString("Export for Discord (small file)"),
+    menu.addAction(many > 1 ? QString("Copy %1 clips for Discord").arg(many)
+                            : QString("Copy for Discord"),
                    this, [=, this] { emit discordRequested(selection); });
     // Only offered when something selected is not H.264 already.
     QStringList convertible;

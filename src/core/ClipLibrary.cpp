@@ -261,6 +261,24 @@ void ClipLibrary::update(const QString &path, const std::function<void(Clip &)> 
     emit clipChanged(path);
 }
 
+void ClipLibrary::refresh(const QString &path)
+{
+    const int row = rowForPath(path);
+    if (row < 0) return;
+    Clip &c = m_clips[row];
+    QFile::remove(thumbPath(path));
+    QFile::remove(filmstripPath(c));
+    m_thumbs.remove(path);
+    m_thumbing.remove(path);
+    m_probeAttempts.remove(path);
+    c.probed = false;
+    c.videoCodec.clear();
+    c.size = QFileInfo(path).size();
+    saveSidecar(c);
+    emit dataChanged(index(row), index(row));
+    ensureMedia(path);
+}
+
 QString ClipLibrary::safeFileName(const QString &title)
 {
     QString n = title.trimmed();

@@ -25,6 +25,7 @@ public:
     QString currentPath() const { return m_clip.path; }
     void commit();  // flush pending edits to the library
     void pause();   // stop playback but keep the clip open where it was
+    void discardPending();  // forget unsaved edits (the file was just rewritten)
 
     void setJobProgress(const QString &path, const QString &stage, double fraction);
     void setJobIdle(const QString &message = {}, bool error = false);
@@ -32,6 +33,7 @@ public:
 signals:
     void backRequested();
     void exportRequested(const QString &path, const QString &name, bool openWhenDone);
+    void overwriteRequested(const QString &path);
     void shareRequested(const QString &path);
     void discordRequested(const QString &path);
     void cancelJobRequested();
@@ -42,6 +44,7 @@ private:
     void refreshInfo();
     void scrubTo(double seconds, bool finished);
     void askSaveAsNew();
+    void askSaveOver();
     bool m_scrubActive = false;
     bool m_resumeAfterScrub = false;
     void refreshShare();
@@ -70,6 +73,7 @@ private:
     QPushButton *m_export;
     QPushButton *m_share;
     QPushButton *m_discord;
+    QPushButton *m_saveOver;
     QPushButton *m_cancel;
     QWidget *m_linkRow;
     QLineEdit *m_link;

@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QShortcut>
@@ -141,12 +142,20 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     m_info->setObjectName("muted");
     m_info->setWordWrap(true);
     sl->addWidget(m_info);
-    m_export = new QPushButton("Save as new clip");
-    m_export->setToolTip("Write the trimmed, mixed version as a new file. The original is kept.");
-    sl->addWidget(m_export);
-    m_discord = new QPushButton("Export for Discord");
-    m_discord->setToolTip("Make a small H.264 copy that fits Discord's upload limit\n"
-                          "(set the limit in Settings → Sharing). Trim and audio mix are applied.");
+    m_saveOver = new QPushButton("Save");
+    m_saveOver->setToolTip("Apply the trim and audio changes to this clip's file.");
+    m_export = new QPushButton("Save as new clip…");
+    m_export->setToolTip("Write the trimmed version as a new file. The original is kept.");
+    auto *saveRow = new QHBoxLayout;
+    saveRow->setContentsMargins(0, 0, 0, 0);
+    saveRow->setSpacing(8);
+    saveRow->addWidget(m_saveOver, 1);
+    saveRow->addWidget(m_export, 2);
+    sl->addLayout(saveRow);
+    m_discord = new QPushButton("Copy for Discord");
+    m_discord->setToolTip("Make a small copy that fits Discord's upload limit and put it on the clipboard,\n"
+                          "ready to paste with Ctrl+V. Nothing is added to your clips.\n"
+                          "Set the limit in Settings → Sharing.");
     sl->addWidget(m_discord);
 
     sl->addSpacing(8);
@@ -260,6 +269,7 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     });
 
     connect(m_export, &QPushButton::clicked, this, &EditorPage::askSaveAsNew);
+    connect(m_saveOver, &QPushButton::clicked, this, &EditorPage::askSaveOver);
     connect(m_discord, &QPushButton::clicked, this, [this] {
         commit();
         emit discordRequested(m_clip.path);
@@ -419,6 +429,46 @@ void EditorPage::buildTrackRows()
     }
 }
 
+void EditorPage::askSaveOver()
+{
+    if (m_clip.path.isEmpty()) return;
+    commit();
+    if (m_scrubActive) scrubTo(m_player->position(), true);
+    m_player->setPaused(true);
+
+    QStringList dropped;
+    for (const ClipTrack &t : std::as_const(m_clip.tracks))
+        if (!t.enabled || t.volume <= 0.001) dropped << t.name;
+    bool volumes = false;
+    for (const ClipTrack &t : std::as_const(m_clip.tracks))
+        volumes |= t.enabled && qAbs(t.volume - 1.0) > 0.01;
+    if (!m_clip.isTrimmed() && dropped.isEmpty() && !volumes) {
+        setJobIdle("Nothing to save: this clip has no trim or audio changes.");
+        return;
+    }
+    QStringList changes;
+    if (m_clip.isTrimmed())
+        changes << QString("cut to %1 (from %2)").arg(formatDuration(m_clip.editedDuration()),
+                                                       formatDuration(m_clip.duration));
+    if (!dropped.isEmpty()) changes << "remove " + dropped.join(", ");
+    if (volumes) changes << "apply the volume changes";
+
+    QMessageBox box(QMessageBox::Question, "Clipstash", "Save changes to this clip?", QMessageBox::Cancel, this);
+    box.setInformativeText("This will " + changes.join(", ") + " in " + QFileInfo(m_clip.path).fileName()
+                           + ".\nThe cut-off parts can't be brought back. Use “Save as new clip” to keep the original.");
+    QPushButton *go = box.addButton("Save", QMessageBox::AcceptRole);
+    box.setDefaultButton(go);
+    box.exec();
+    if (box.clickedButton() != go) return;
+    emit overwriteRequested(m_clip.path);
+}
+
+void EditorPage::discardPending()
+{
+    m_saveTimer.stop();
+    m_dirty = false;
+}
+
 void EditorPage::askSaveAsNew()
 {
     if (m_clip.path.isEmpty()) return;
@@ -450,7 +500,7 @@ void EditorPage::askSaveAsNew()
     if (!m_clip.tracks.isEmpty())
         facts << (kept.isEmpty() ? QString("no audio")
                                  : kept.size() == 1 ? QString("audio: %1").arg(kept.first())
-                                                    : QString("audio: %1 (merged)").arg(kept.join(" + ")));
+                                                    : QString("audio: %1 (kept as separate tracks)").arg(kept.join(", ")));
     auto *summary = new QLabel(facts.join(" · "));
     summary->setObjectName("muted");
     summary->setWordWrap(true);
@@ -590,6 +640,7 @@ void EditorPage::loadFilmstrip()
 void EditorPage::setJobProgress(const QString &path, const QString &stage, double fraction)
 {
     m_export->setEnabled(false);
+    m_saveOver->setEnabled(false);
     m_share->setEnabled(false);
     m_discord->setEnabled(false);
     if (path != m_clip.path) return;
@@ -603,6 +654,7 @@ void EditorPage::setJobProgress(const QString &path, const QString &stage, doubl
 void EditorPage::setJobIdle(const QString &message, bool error)
 {
     m_export->setEnabled(true);
+    m_saveOver->setEnabled(true);
     m_share->setEnabled(true);
     m_discord->setEnabled(true);
     m_progress->hide();

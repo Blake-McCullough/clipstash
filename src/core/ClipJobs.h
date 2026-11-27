@@ -15,13 +15,19 @@ public:
     ClipJobs(ClipLibrary *library, QObject *parent = nullptr);
 
     bool busy() const { return m_busy; }
+    bool isBatchRunning() const { return m_batch; }
     QString activeClip() const { return m_clipPath; }
     Uploader *uploader() { return &m_uploader; }
 
     // Render the clip's edits to a new file in the library.
     // `name` becomes the new clip's title and file name; empty means
     // "<title> (edit)" next to the original.
-    bool exportClip(const Clip &clip, const Settings &s, const QString &name = {});
+    // `separateTracks`: keep each kept audio source as its own track.
+    bool exportClip(const Clip &clip, const Settings &s, const QString &name = {}, bool separateTracks = true);
+    // Apply the trim and audio changes to the clip's own file.
+    bool overwriteClip(const Clip &clip, const Settings &s);
+    // Where "Export for Discord" files are kept (not part of the library).
+    static QString discordDir();
     // Render if needed (so every browser plays the intended mix), then upload.
     bool shareClip(const Clip &clip, const Settings &s);
     // Re-encode the file itself to H.264 in place (same name, date, tracks and
@@ -44,6 +50,7 @@ signals:
     void shared(const QString &clipPath, const QString &url);
     void failed(const QString &clipPath, const QString &message);
     void converted(const QString &clipPath);
+    void overwritten(const QString &clipPath);
     void discordReady(const QString &clipPath, const QString &outPath);
     // A multi-clip run ended. `what` is "Exported" or "Converted".
     void batchFinished(const QString &what, int succeeded, int failed, const QString &lastError);
@@ -66,6 +73,7 @@ private:
     bool m_busy = false;
     bool m_sharing = false;
     bool m_converting = false;
+    bool m_overwriting = false;
     // batch state
     QStringList m_queue;
     Settings m_batchSettings;

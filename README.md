@@ -66,9 +66,9 @@ already in place. The first time a new app is noticed the replay buffer restarts
 
 ### Sharing on Discord
 
-**Export for Discord** (editor button, or right-click in the library) makes a small H.264 copy
-that fits under Discord's upload limit and puts the file on the clipboard, so Ctrl+V in
-Discord attaches it. Resolution and frame rate are chosen from the clip length and the limit
+**Copy for Discord** (editor button, or right-click in the library) makes a small H.264 copy
+that fits under Discord's upload limit and puts it on the clipboard, so Ctrl+V in Discord
+attaches it. The copy is kept out of your clip folder and cleaned up after two days. Resolution and frame rate are chosen from the clip length and the limit
 set in **Settings → Sharing** (10 MB by default; raise it if your account allows more).
 
 ### Start with the computer
@@ -104,6 +104,16 @@ folder such as `/usr/bin`, your desktop asks for your password to do that. Then 
 
 Releases are built automatically: change the version in `CMakeLists.txt`, push to `main`,
 and GitHub Actions builds, tests and publishes the release for that version.
+
+## Saving edits
+
+- **Save** applies the trim and audio changes to the clip itself (it asks first, since the
+  cut-off parts are gone for good).
+- **Save as new clip…** asks for a name and writes a new file, leaving the original alone.
+
+Both keep each audio source you left ticked as its own track, so you can still mute or
+rebalance them later. Only sharing (Pixeldrain, Discord) merges them into one track, because
+browsers and Discord only play the first.
 
 ## Full recordings
 

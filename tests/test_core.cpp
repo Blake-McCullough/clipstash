@@ -239,7 +239,8 @@ private slots:
         QVERIFY(jobs.discordClip(lib.clipAt(0), s));
         QVERIFY2(ready.wait(120000), failed.isEmpty() ? "timeout" : qPrintable(failed[0][1].toString()));
         const QString out = ready[0][1].toString();
-        QVERIFY(out.endsWith("_discord.mp4"));
+        QVERIFY2(out.startsWith(ClipJobs::discordDir()), qPrintable(out));  // a clipboard copy, not a clip
+        QCOMPARE(lib.rowCount(), 1);
         const qint64 size = QFileInfo(out).size();
         QVERIFY2(size <= 2 * 1024 * 1024, qPrintable(QString::number(size)));
         QVERIFY2(size > 1024 * 1024, qPrintable(QString::number(size)));  // and it used the budget
@@ -420,6 +421,57 @@ while true; do sleep 0.1; done
         QVERIFY(QDir(Recorder::recordingDir(s.libraryDir)).entryList(QDir::Files).isEmpty());
         rec.stop();
         QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Stopped, 5000);
+    }
+
+    // "Save" / "Save as new clip": sources stay separate tracks, the dropped
+    // one is gone, and "Save" rewrites the clip itself.
+    void saveKeepsSeparateTracks()
+    {
+        if (!haveFfmpeg()) QSKIP("ffmpeg not installed");
+        QTemporaryDir dir;
+        const QString src = dir.filePath("Replay_x.mp4");
+        QCOMPARE(QProcess::execute("ffmpeg", {"-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc=size=320x180:rate=30:duration=6",
+            "-f", "lavfi", "-i", "sine=frequency=300:duration=6",
+            "-f", "lavfi", "-i", "sine=frequency=1000:duration=6",
+            "-f", "lavfi", "-i", "sine=frequency=3000:duration=6",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a",
+            "-c:v", "libx264", "-preset", "ultrafast", "-g", "15", "-pix_fmt", "yuv420p", "-c:a", "aac", src}), 0);
+        ClipLibrary lib;
+        lib.setDirectory(dir.path());
+        QTRY_VERIFY_WITH_TIMEOUT(lib.rowCount() == 1 && lib.clipAt(0).probed, 15000);
+        lib.update(src, [](Clip &c) {
+            c.tracks = {{"Game", true, 1.0}, {"Spotify", false, 1.0}, {"Mic", true, 0.5}};
+            c.trimStart = 1;
+            c.trimEnd = 4;
+        });
+        auto probeFile = [](const QString &f) {
+            QProcess p;
+            p.start("ffprobe", {"-v", "error", "-print_format", "json", "-show_format", "-show_streams", f});
+            p.waitForFinished(10000);
+            return MediaTools::parseProbeJson(p.readAllStandardOutput());
+        };
+        Settings s;
+        s.exportEncoder = "libx264";
+        ClipJobs jobs(&lib);
+
+        QSignalSpy exported(&jobs, &ClipJobs::exported);
+        QVERIFY(jobs.exportClip(*lib.clip(src), s, "Ace"));
+        QVERIFY(exported.wait(30000));
+        const ProbeResult copy = probeFile(exported[0][1].toString());
+        QCOMPARE(copy.audioTitles, QStringList({"Game", "Mic"}));
+        QVERIFY(qAbs(copy.duration - 3) < 1.2);
+
+        QSignalSpy overwritten(&jobs, &ClipJobs::overwritten);
+        QVERIFY(jobs.overwriteClip(*lib.clip(src), s));
+        QVERIFY(overwritten.wait(30000));
+        const ProbeResult same = probeFile(src);
+        QCOMPARE(same.audioTitles, QStringList({"Game", "Mic"}));
+        QVERIFY(qAbs(same.duration - 3) < 1.2);
+        const Clip *c = lib.clip(src);
+        QVERIFY(c && !c->isTrimmed() && c->tracks.size() == 2);
+        QCOMPARE(c->tracks[1].volume, 1.0);  // baked into the file
+        QTRY_VERIFY_WITH_TIMEOUT(lib.clip(src)->probed && lib.clip(src)->duration < 4.5, 15000);
     }
 
     void needsRender()

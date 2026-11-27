@@ -16,6 +16,9 @@ struct ExportOptions {
     // Size-targeted encode (Discord): constrained bitrate instead of quality.
     int targetVideoKbps = 0;
     int maxFps = 0;
+    // Keep each audio source as its own track (saves) instead of mixing them
+    // into one (sharing, where players only play the first track).
+    bool separateTracks = false;
 
     static ExportOptions fromSettings(const Settings &s);
     // Options for one clip: applies the "make it play everywhere" rule (HEVC

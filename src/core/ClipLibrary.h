@@ -40,6 +40,8 @@ public:
     // fills `error` on failure.
     QString rename(const QString &path, const QString &title, QString *error = nullptr);
     static QString safeFileName(const QString &title);
+    // The file at `path` was replaced: read it again and redo its thumbnails.
+    void refresh(const QString &path);
     QString filmstripPath(const Clip &c) const;
     QString metaDir() const;
 

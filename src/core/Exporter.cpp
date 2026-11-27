@@ -33,9 +33,11 @@ ExportOptions ExportOptions::forDiscord(const Settings &s, const Clip &clip, dou
     const double totalKbps = s.discordLimitMb * 8.0 * 1024 * 0.94 / seconds * scale;
     int video = int(totalKbps) - (hasAudio ? o.audioKbps : 0);
     // Never spend more than the source is worth: a clip that is already small
-    // should not grow. Allow double, since H.264 needs more bits than HEVC/AV1.
-    if (clip.size > 0 && clip.duration > 0)
-        video = qMin(video, int(clip.size * 8.0 / 1024 / clip.duration * 2));
+    // should not grow. HEVC/AV1 sources get double, since H.264 needs more bits.
+    if (clip.size > 0 && clip.duration > 0) {
+        const double factor = clip.playsEverywhere() ? 0.9 : 2.0;
+        video = qMin(video, int(clip.size * 8.0 / 1024 / clip.duration * factor));
+    }
 
     struct Step { int minKbps, height, fps, capKbps; };
     static const Step ladder[] = {
@@ -91,6 +93,23 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
         a << "-map" << "0:a?" << "-c:a" << "copy";
     } else if (enabled.isEmpty()) {
         a << "-an";
+    } else if (o.separateTracks) {
+        // One output track per kept source, in order. Untouched ones are copied
+        // as they are; only tracks with a changed volume are re-encoded.
+        QStringList chains;
+        for (int n = 0; n < enabled.size(); ++n) {
+            const ClipTrack &t = clip.tracks[enabled[n]];
+            const QString idx = QString::number(n);
+            if (qAbs(t.volume - 1.0) < 0.01) {
+                a << "-map" << QString("0:a:%1").arg(enabled[n]) << "-c:a:" + idx << "copy";
+            } else {
+                chains << QString("[0:a:%1]volume=%2[s%3]").arg(enabled[n]).arg(t.volume, 0, 'f', 2).arg(n);
+                a << "-map" << QString("[s%1]").arg(n) << "-c:a:" + idx << "aac"
+                  << "-b:a:" + idx << QString("%1k").arg(o.audioKbps);
+            }
+            a << "-metadata:s:a:" + idx << "title=" + t.name << "-metadata:s:a:" + idx << "handler_name=" + t.name;
+        }
+        if (!chains.isEmpty()) a << "-filter_complex" << chains.join(';');
     } else if (enabled.size() == 1 && qAbs(clip.tracks[enabled[0]].volume - 1.0) < 0.01) {
         a << "-map" << QString("0:a:%1").arg(enabled[0])
           << "-metadata:s:a:0" << "title=" + clip.tracks[enabled[0]].name

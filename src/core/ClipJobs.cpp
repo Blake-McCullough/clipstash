@@ -6,6 +6,8 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QUuid>
+#include <QDateTime>
+#include <QStandardPaths>
 
 #include <cstdio>
 
@@ -36,7 +38,26 @@ ClipJobs::ClipJobs(ClipLibrary *library, QObject *parent) : QObject(parent), m_l
         }
         const QString src = m_clipPath;
         const QString newTitle = m_newTitle;
-        if (m_converting) {
+        if (m_overwriting) {
+            QString why;
+            if (!replaceOriginal(out, src, &why)) {
+                fail(src, why);
+                return;
+            }
+            m_tempFile.clear();
+            finish();
+            // The edits are now part of the file: start from a clean slate.
+            m_library->update(src, [&](Clip &c) {
+                QList<ClipTrack> kept;
+                for (const ClipTrack &t : std::as_const(c.tracks))
+                    if (t.enabled && t.volume > 0.001) kept.append({t.name, true, 1.0});
+                c.tracks = kept;
+                c.trimStart = 0;
+                c.trimEnd = -1;
+            });
+            m_library->refresh(src);
+            emit overwritten(src);
+        } else if (m_converting) {
             QString why;
             if (!replaceOriginal(out, src, &why)) {
                 fail(src, why);
@@ -64,13 +85,11 @@ ClipJobs::ClipJobs(ClipLibrary *library, QObject *parent) : QObject(parent), m_l
             }
             const QString final = publish(out);
             if (final.isEmpty()) {
-                fail(src, "Could not move the finished file into the clip folder.");
+                fail(src, "Could not move the finished file into place.");
                 return;
             }
             finish();
-            m_library->addFile(final);
-            m_library->update(final, [&](Clip &c) { c.title = newTitle; });
-            emit discordReady(src, final);
+            emit discordReady(src, final);  // a throwaway copy for the clipboard, not a library clip
         } else {
             const QString final = publish(out);
             if (final.isEmpty()) {
@@ -131,6 +150,7 @@ void ClipJobs::finish()
     m_clipPath.clear();
     m_sharing = false;
     m_converting = false;
+    m_overwriting = false;
     m_discord = false;
     setBusy(false);
 }
@@ -146,8 +166,16 @@ bool ClipJobs::discordClip(const Clip &clip, const Settings &s)
     m_discordSettings = s;
     setBusy(true);
     emit progress(m_clipPath, stageLabel("Shrinking"), 0);
-    m_newTitle = clip.title + " (Discord)";
-    m_finalPath = uniquePath(clip.path, "_discord");
+    m_newTitle = clip.title;
+    // Kept out of the library: a fresh copy each time, named after the clip so
+    // that is what people see in Discord. Copies older than two days go.
+    const QString dir = discordDir();
+    QDir().mkpath(dir);
+    const QFileInfoList old = QDir(dir).entryInfoList({"*.mp4"}, QDir::Files);
+    for (const QFileInfo &fi : old)
+        if (fi.lastModified().secsTo(QDateTime::currentDateTime()) > 2 * 24 * 3600) QFile::remove(fi.absoluteFilePath());
+    m_finalPath = dir + "/" + ClipLibrary::safeFileName(clip.title) + ".mp4";
+    QFile::remove(m_finalPath);
     m_exporter.start(clip, ExportOptions::forDiscord(s, clip), tempOutput());
     return true;
 }
@@ -241,9 +269,10 @@ void ClipJobs::nextInBatch()
         const Clip *c = m_library->clip(path);
         if (!c) continue;  // deleted meanwhile
         const Clip clip = *c;
+        // Batch exports are "for sharing", so their audio is merged into one track.
         const bool started = m_batchKind == Kind::Convert ? convertClip(clip, m_batchSettings)
                            : m_batchKind == Kind::Discord ? discordClip(clip, m_batchSettings)
-                                                          : exportClip(clip, m_batchSettings);
+                                                          : exportClip(clip, m_batchSettings, {}, false);
         if (started) return;
     }
     m_batch = false;
@@ -277,7 +306,26 @@ QString ClipJobs::publish(const QString &rendered)
     return final;
 }
 
-bool ClipJobs::exportClip(const Clip &clip, const Settings &s, const QString &name)
+QString ClipJobs::discordDir()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/discord";
+}
+
+bool ClipJobs::overwriteClip(const Clip &clip, const Settings &s)
+{
+    if (m_busy) return false;
+    m_clipPath = clip.path;
+    m_title = clip.title;
+    m_overwriting = true;
+    setBusy(true);
+    ExportOptions o = ExportOptions::forClip(s, clip, false);
+    o.separateTracks = true;
+    emit progress(m_clipPath, stageLabel("Saving"), 0);
+    m_exporter.start(clip, o, tempOutput());
+    return true;
+}
+
+bool ClipJobs::exportClip(const Clip &clip, const Settings &s, const QString &name, bool separateTracks)
 {
     if (m_busy) return false;
     m_clipPath = clip.path;
@@ -294,7 +342,9 @@ bool ClipJobs::exportClip(const Clip &clip, const Settings &s, const QString &na
     }
     setBusy(true);
     emit progress(m_clipPath, stageLabel("Exporting"), 0);
-    m_exporter.start(clip, ExportOptions::forClip(s, clip, false), tempOutput());
+    ExportOptions o = ExportOptions::forClip(s, clip, false);
+    o.separateTracks = separateTracks;
+    m_exporter.start(clip, o, tempOutput());
     return true;
 }
 

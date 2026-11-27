@@ -128,8 +128,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         if (!c || !c->probed) return;
         m_pendingOpen.clear();
         if (m_stack->currentWidget() != m_editor) return;  // user moved on meanwhile
+        const QString note = m_pendingOpenNote.isEmpty() ? QString("Now editing the new clip. The original is unchanged.")
+                                                         : m_pendingOpenNote;
+        m_pendingOpenNote.clear();
         openClip(path);
-        m_editor->setJobIdle("Now editing the new clip. The original is unchanged.");
+        m_editor->setJobIdle(note);
     });
     connect(&m_jobs, &ClipJobs::shared, this, [this](const QString &, const QString &url) {
         m_libraryPage->clearJobProgress();
@@ -142,20 +145,39 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         m_editor->setJobIdle("Converted to H.264.");
     });
     connect(&m_jobs, &ClipJobs::discordReady, this, [this](const QString &, const QString &out) {
+        m_discordFiles << out;
+        if (m_jobs.isBatchRunning()) return;  // copied together once the batch is done
+        copyDiscordFiles();
+    });
+    connect(m_editor, &EditorPage::overwriteRequested, this, [this](const QString &path) {
+        const Clip *c = m_library.clip(path);
+        if (!c) return;
+        if (m_jobs.busy()) {
+            m_editor->setJobIdle("Another export or upload is still running.", true);
+            return;
+        }
+        m_jobs.overwriteClip(*c, m_settings);
+    });
+    connect(&m_jobs, &ClipJobs::overwritten, this, [this](const QString &path) {
         m_libraryPage->clearJobProgress();
-        // Put the file itself on the clipboard: Ctrl+V in Discord attaches it.
-        auto *mime = new QMimeData;
-        mime->setUrls({QUrl::fromLocalFile(out)});
-        mime->setText(out);
-        QApplication::clipboard()->setMimeData(mime);
-        const QString text = QString("%1 (%2) is ready and copied. Paste it into Discord with Ctrl+V.")
-                                 .arg(QFileInfo(out).fileName(), formatSize(QFileInfo(out).size()));
-        m_editor->setJobIdle(text);
-        notify("Discord version ready", text);
+        // Reload the editor from the rewritten file once it has been read.
+        if (m_stack->currentWidget() == m_editor && m_editor->currentPath() == path) {
+            m_editor->discardPending();
+            m_editor->close();
+            m_pendingOpen = path;
+            m_pendingOpenNote = "Saved.";
+            QTimer::singleShot(6000, this, [this, path] {
+                if (m_pendingOpen != path) return;
+                m_pendingOpen.clear();
+                if (m_stack->currentWidget() == m_editor) openClip(path);
+            });
+        }
+        notify("Clip saved", QFileInfo(path).fileName());
     });
     connect(&m_jobs, &ClipJobs::batchFinished, this,
             [this](const QString &what, int ok, int failed, const QString &lastError) {
         m_libraryPage->clearJobProgress();
+        if (!m_discordFiles.isEmpty()) copyDiscordFiles();
         if (ok + failed < 2 && failed == 0) return;  // a single clip already reported itself
         QString text = QString("%1 %2 clip%3.").arg(what).arg(ok).arg(ok == 1 ? "" : "s");
         if (failed > 0) text += QString(" %1 failed: %2").arg(failed).arg(lastError);
@@ -591,6 +613,30 @@ void MainWindow::exportClip(const QString &path, const QString &name, bool openW
         return;
     }
     if (m_jobs.exportClip(*c, m_settings, name)) m_openAfterExport = openWhenDone ? path : QString();
+}
+
+void MainWindow::copyDiscordFiles()
+{
+    QList<QUrl> urls;
+    QStringList lines;
+    qint64 total = 0;
+    for (const QString &f : std::as_const(m_discordFiles)) {
+        urls << QUrl::fromLocalFile(f);
+        lines << QString::fromUtf8(QUrl::fromLocalFile(f).toEncoded());
+        total += QFileInfo(f).size();
+    }
+    // The file itself goes on the clipboard, in the formats file managers use,
+    // so Ctrl+V in Discord attaches it.
+    auto *mime = new QMimeData;
+    mime->setUrls(urls);
+    mime->setData("x-special/gnome-copied-files", ("copy\n" + lines.join('\n')).toUtf8());
+    QApplication::clipboard()->setMimeData(mime);
+    const QString what = m_discordFiles.size() == 1 ? QFileInfo(m_discordFiles.first()).fileName()
+                                                    : QString("%1 clips").arg(m_discordFiles.size());
+    const QString text = QString("%1 (%2) copied. Paste it into Discord with Ctrl+V.").arg(what, formatSize(total));
+    m_discordFiles.clear();
+    m_editor->setJobIdle(text);
+    notify("Ready for Discord", text);
 }
 
 void MainWindow::convertClips(const QStringList &paths)
