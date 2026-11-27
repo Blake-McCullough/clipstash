@@ -25,7 +25,7 @@ void Timeline::setDuration(double s)
 
 void Timeline::setPosition(double s)
 {
-    if (m_drag == Drag::Playhead) return;
+    if (m_drag != Drag::None) return;  // the mouse owns the playhead while dragging
     m_position = s;
     update();
 }

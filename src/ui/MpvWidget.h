@@ -2,6 +2,7 @@
 #include "core/Clip.h"
 
 #include <QOpenGLWidget>
+#include <QTimer>
 
 struct mpv_handle;
 struct mpv_render_context;
@@ -44,7 +45,19 @@ private slots:
     void onMpvEvents();
     void maybeUpdate();
 
+public:
+    // For dragging on the timeline: frame-exact, but only one seek in flight
+    // at a time and always to the newest position, so the picture keeps up
+    // with the mouse instead of queueing hundreds of seeks.
+    void scrub(double seconds);
+
 private:
+    void issueScrub();
+    bool m_scrubbing = false;
+    QString m_lastHwdec;
+    bool m_scrubPending = false;
+    double m_scrubTarget = 0;
+    QTimer *m_scrubGuard = nullptr;
     void releaseGL();
     static void onUpdate(void *ctx);
     static void onWakeup(void *ctx);

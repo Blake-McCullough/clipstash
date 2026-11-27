@@ -109,7 +109,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             m_pendingOpen.clear();
             openClip(out);
             m_editor->setJobIdle("Now editing the new clip. The original is unchanged.");
+            return;
         }
+        // Normally it opens as soon as it has been read (below); never leave
+        // the user waiting on the old clip if that takes unusually long.
+        QTimer::singleShot(6000, this, [this, out] {
+            if (m_pendingOpen != out) return;
+            m_pendingOpen.clear();
+            if (m_stack->currentWidget() != m_editor || !m_library.clip(out)) return;
+            openClip(out);
+            m_editor->setJobIdle("Now editing the new clip. The original is unchanged.");
+        });
     });
     // A new clip opens once its length and audio tracks are known.
     connect(&m_library, &ClipLibrary::clipChanged, this, [this](const QString &path) {
@@ -572,7 +582,7 @@ void MainWindow::shareClip(const QString &path)
     m_jobs.shareClip(*c, m_settings);
 }
 
-void MainWindow::exportClip(const QString &path)
+void MainWindow::exportClip(const QString &path, const QString &name, bool openWhenDone)
 {
     const Clip *c = m_library.clip(path);
     if (!c) return;
@@ -580,7 +590,7 @@ void MainWindow::exportClip(const QString &path)
         m_editor->setJobIdle("Another export or upload is still running.", true);
         return;
     }
-    if (m_jobs.exportClip(*c, m_settings)) m_openAfterExport = path;
+    if (m_jobs.exportClip(*c, m_settings, name)) m_openAfterExport = openWhenDone ? path : QString();
 }
 
 void MainWindow::convertClips(const QStringList &paths)

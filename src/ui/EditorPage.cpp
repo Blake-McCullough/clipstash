@@ -8,6 +8,8 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QDialog>
+#include <QSettings>
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QFileInfo>
@@ -56,7 +58,7 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     header->addWidget(back);
     header->addWidget(m_title, 1);
     auto *renameBtn = new QPushButton("Rename");
-    renameBtn->setProperty("kind", "flat");
+    renameBtn->setProperty("kind", "flat");  // falls back to the normal button style
     renameBtn->setToolTip("Rename the clip and its file");
     connect(renameBtn, &QPushButton::clicked, this, [this] {
         m_title->setFocus();
@@ -233,13 +235,13 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
     connect(vol, &QSlider::valueChanged, m_player, &MpvWidget::setVolume);
 
     connect(m_timeline, &Timeline::seekRequested, this, [this](double t, bool finished) {
-        m_player->seek(t, finished);
+        scrubTo(t, finished);
     });
     connect(m_timeline, &Timeline::trimChanged, this, [this](double a, double b, bool finished) {
         const bool startMoved = qAbs(a - m_clip.trimStart) > 1e-6;
         m_clip.trimStart = a;
         m_clip.trimEnd = b >= m_clip.duration - 0.01 ? -1 : b;
-        m_player->seek(startMoved ? a : b, finished);
+        scrubTo(startMoved ? a : b, finished);
         refreshInfo();
         if (finished) {
             m_player->setLoopRange(m_clip.effectiveStart(), m_clip.effectiveEnd());
@@ -257,10 +259,7 @@ EditorPage::EditorPage(ClipLibrary *library, QWidget *parent) : QWidget(parent),
         scheduleSave();
     });
 
-    connect(m_export, &QPushButton::clicked, this, [this] {
-        commit();
-        emit exportRequested(m_clip.path);
-    });
+    connect(m_export, &QPushButton::clicked, this, &EditorPage::askSaveAsNew);
     connect(m_discord, &QPushButton::clicked, this, [this] {
         commit();
         emit discordRequested(m_clip.path);
@@ -418,6 +417,110 @@ void EditorPage::buildTrackRows()
                 QTimer::singleShot(0, this, [this] { m_player->setAudioMix(m_clip.tracks); });
         });
     }
+}
+
+void EditorPage::askSaveAsNew()
+{
+    if (m_clip.path.isEmpty()) return;
+    commit();
+    if (m_scrubActive) scrubTo(m_player->position(), true);
+    m_player->setPaused(true);
+
+    QDialog dlg(this);
+    dlg.setWindowTitle("Clipstash");
+    dlg.setMinimumWidth(480);
+    dlg.setStyleSheet("QDialog { background: #161920; border: 1px solid #2a2f3a; }"
+                      "QDialog QLabel, QDialog QCheckBox { background: transparent; }");
+    auto *v = new QVBoxLayout(&dlg);
+    v->setContentsMargins(22, 20, 22, 18);
+    v->setSpacing(10);
+
+    auto *heading = new QLabel("Save as new clip");
+    heading->setStyleSheet("font-size: 17px; font-weight: 700;");
+    v->addWidget(heading);
+
+    // What is going to be saved, so there are no surprises.
+    QStringList kept;
+    for (const ClipTrack &t : std::as_const(m_clip.tracks))
+        if (t.enabled && t.volume > 0.001) kept << t.name;
+    QStringList facts;
+    facts << (m_clip.isTrimmed() ? QString("%1, trimmed from %2").arg(formatDuration(m_clip.editedDuration()),
+                                                                       formatDuration(m_clip.duration))
+                                 : QString("%1, full length").arg(formatDuration(m_clip.duration)));
+    if (!m_clip.tracks.isEmpty())
+        facts << (kept.isEmpty() ? QString("no audio")
+                                 : kept.size() == 1 ? QString("audio: %1").arg(kept.first())
+                                                    : QString("audio: %1 (merged)").arg(kept.join(" + ")));
+    auto *summary = new QLabel(facts.join(" · "));
+    summary->setObjectName("muted");
+    summary->setWordWrap(true);
+    v->addWidget(summary);
+
+    v->addSpacing(4);
+    auto *label = new QLabel("Name");
+    label->setStyleSheet("font-weight: 600;");
+    v->addWidget(label);
+    auto *name = new QLineEdit(m_clip.title + " (edit)");
+    name->setPlaceholderText("e.g. 1v5 ace on Tokyo 2099");
+    name->selectAll();  // typing replaces the suggestion straight away
+    v->addWidget(name);
+    auto *file = new QLabel;
+    file->setObjectName("muted");
+    file->setWordWrap(true);
+    v->addWidget(file);
+    const QString dir = QFileInfo(m_clip.path).absolutePath();
+    auto updateFile = [=, this] {
+        const QString base = ClipLibrary::safeFileName(name->text().trimmed().isEmpty() ? m_clip.title + " (edit)"
+                                                                                         : name->text());
+        QString f = base + ".mp4";
+        for (int n = 2; QFileInfo::exists(dir + "/" + f); ++n) f = QString("%1 (%2).mp4").arg(base).arg(n);
+        file->setText("Saved as " + f + " next to the original. The original stays as it is.");
+    };
+    updateFile();
+    connect(name, &QLineEdit::textChanged, &dlg, updateFile);
+
+    QSettings prefs;
+    auto *open = new QCheckBox("Open the new clip when it's saved");
+    open->setChecked(prefs.value("editor/openAfterSave", true).toBool());
+    v->addWidget(open);
+
+    v->addSpacing(6);
+    auto *buttons = new QHBoxLayout;
+    buttons->addStretch();
+    auto *cancel = new QPushButton("Cancel");
+    auto *save = new QPushButton("Save clip");
+    save->setObjectName("primary");
+    save->setDefault(true);
+    buttons->addWidget(cancel);
+    buttons->addWidget(save);
+    v->addLayout(buttons);
+    connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+    connect(save, &QPushButton::clicked, &dlg, &QDialog::accept);
+    name->setFocus();
+
+    if (dlg.exec() != QDialog::Accepted) return;
+    prefs.setValue("editor/openAfterSave", open->isChecked());
+    const QString chosen = name->text().trimmed().isEmpty() ? m_clip.title + " (edit)" : name->text().trimmed();
+    emit exportRequested(m_clip.path, chosen, open->isChecked());
+}
+
+void EditorPage::scrubTo(double t, bool finished)
+{
+    if (!finished) {
+        // Hold playback while dragging, so the frame shown is the one under the mouse.
+        if (!m_scrubActive) {
+            m_scrubActive = true;
+            m_resumeAfterScrub = !m_player->isPaused();
+            if (m_resumeAfterScrub) m_player->setPaused(true);
+        }
+        m_player->scrub(t);
+        m_time->setText(formatDuration(t) + " / " + formatDuration(m_clip.duration));
+        return;
+    }
+    m_player->seek(t, true);
+    if (m_scrubActive && m_resumeAfterScrub) m_player->setPaused(false);
+    m_scrubActive = false;
+    m_resumeAfterScrub = false;
 }
 
 void EditorPage::refreshInfo()

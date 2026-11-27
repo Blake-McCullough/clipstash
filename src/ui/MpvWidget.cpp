@@ -1,5 +1,7 @@
 #include "ui/MpvWidget.h"
 
+#include "core/Recorder.h"
+
 #include <QGuiApplication>
 #include <QMouseEvent>
 #include <QOpenGLContext>
@@ -67,6 +69,9 @@ MpvWidget::MpvWidget(QWidget *parent) : QOpenGLWidget(parent)
     mpv_observe_property(m_mpv, 0, "time-pos", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, 0, "duration", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, 0, "pause", MPV_FORMAT_FLAG);
+    // Logged so --diagnose shows whether previews are decoded on the GPU
+    // (smooth) or the CPU (slow scrubbing on 4K HEVC).
+    mpv_observe_property(m_mpv, 0, "hwdec-current", MPV_FORMAT_STRING);
     mpv_set_wakeup_callback(m_mpv, onWakeup, this);
 }
 
@@ -157,6 +162,11 @@ void MpvWidget::onMpvEvents()
             emit fileLoaded();
         } else if (ev->event_id == MPV_EVENT_PLAYBACK_RESTART) {
             update();
+            if (m_scrubbing) {
+                m_scrubbing = false;
+                m_scrubGuard->stop();
+                if (m_scrubPending) issueScrub();
+            }
         } else if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE) {
             auto *prop = static_cast<mpv_event_property *>(ev->data);
             const QByteArray name(prop->name);
@@ -166,6 +176,12 @@ void MpvWidget::onMpvEvents()
             } else if (name == "duration" && prop->format == MPV_FORMAT_DOUBLE) {
                 m_duration = *static_cast<double *>(prop->data);
                 emit durationChanged(m_duration);
+            } else if (name == "hwdec-current" && prop->format == MPV_FORMAT_STRING) {
+                const QString hw = QString::fromUtf8(*static_cast<char **>(prop->data));
+                if (!hw.isEmpty() && hw != m_lastHwdec) {
+                    m_lastHwdec = hw;
+                    Recorder::log("player: decoding with " + (hw == "no" ? QString("the CPU (no hardware decoding)") : hw));
+                }
             } else if (name == "pause" && prop->format == MPV_FORMAT_FLAG) {
                 m_paused = *static_cast<int *>(prop->data);
                 emit pausedChanged(m_paused);
@@ -238,8 +254,33 @@ void MpvWidget::setAudioMix(const QList<ClipTrack> &tracks)
 
 void MpvWidget::setPaused(bool paused) { setMpv("pause", paused ? "yes" : "no"); }
 
+void MpvWidget::scrub(double seconds)
+{
+    m_scrubTarget = qMax(0.0, seconds);
+    m_scrubPending = true;
+    if (!m_scrubbing) issueScrub();
+}
+
+void MpvWidget::issueScrub()
+{
+    if (!m_scrubGuard) {
+        m_scrubGuard = new QTimer(this);
+        m_scrubGuard->setSingleShot(true);
+        m_scrubGuard->setInterval(700);  // never wait forever on a lost event
+        connect(m_scrubGuard, &QTimer::timeout, this, [this] {
+            m_scrubbing = false;
+            if (m_scrubPending) issueScrub();
+        });
+    }
+    m_scrubPending = false;
+    m_scrubbing = true;
+    m_scrubGuard->start();
+    command({"seek", QString::number(m_scrubTarget, 'f', 3), "absolute+exact"});
+}
+
 void MpvWidget::seek(double seconds, bool exact)
 {
+    m_scrubPending = false;
     command({"seek", QString::number(qMax(0.0, seconds), 'f', 3), exact ? "absolute+exact" : "absolute+keyframes"});
 }
 

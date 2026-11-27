@@ -35,7 +35,7 @@ ClipJobs::ClipJobs(ClipLibrary *library, QObject *parent) : QObject(parent), m_l
             return;
         }
         const QString src = m_clipPath;
-        const QString title = m_title;
+        const QString newTitle = m_newTitle;
         if (m_converting) {
             QString why;
             if (!replaceOriginal(out, src, &why)) {
@@ -62,15 +62,25 @@ ClipJobs::ClipJobs(ClipLibrary *library, QObject *parent) : QObject(parent), m_l
                 m_exporter.start(m_discordClip, ExportOptions::forDiscord(m_discordSettings, m_discordClip, scale), out);
                 return;
             }
+            const QString final = publish(out);
+            if (final.isEmpty()) {
+                fail(src, "Could not move the finished file into the clip folder.");
+                return;
+            }
             finish();
-            m_library->addFile(out);
-            m_library->update(out, [&](Clip &c) { c.title = title + " (Discord)"; });
-            emit discordReady(src, out);
+            m_library->addFile(final);
+            m_library->update(final, [&](Clip &c) { c.title = newTitle; });
+            emit discordReady(src, final);
         } else {
+            const QString final = publish(out);
+            if (final.isEmpty()) {
+                fail(src, "Could not move the finished file into the clip folder.");
+                return;
+            }
             finish();
-            m_library->addFile(out);
-            m_library->update(out, [&](Clip &c) { c.title = title + " (edit)"; });
-            emit exported(src, out);
+            m_library->addFile(final);
+            m_library->update(final, [&](Clip &c) { c.title = newTitle; });
+            emit exported(src, final);
         }
         if (m_batch) {
             ++m_batchOk;
@@ -136,7 +146,9 @@ bool ClipJobs::discordClip(const Clip &clip, const Settings &s)
     m_discordSettings = s;
     setBusy(true);
     emit progress(m_clipPath, stageLabel("Shrinking"), 0);
-    m_exporter.start(clip, ExportOptions::forDiscord(s, clip), uniquePath(clip.path, "_discord"));
+    m_newTitle = clip.title + " (Discord)";
+    m_finalPath = uniquePath(clip.path, "_discord");
+    m_exporter.start(clip, ExportOptions::forDiscord(s, clip), tempOutput());
     return true;
 }
 
@@ -239,15 +251,50 @@ void ClipJobs::nextInBatch()
                        m_batchOk, m_batchFailed, m_batchError);
 }
 
-bool ClipJobs::exportClip(const Clip &clip, const Settings &s)
+QString ClipJobs::tempOutput()
+{
+    // Rendered in the hidden folder and moved into place when complete, so a
+    // half-written file never shows up in the library or a file manager.
+    const QString dir = m_library->metaDir() + "/tmp";
+    QDir().mkpath(dir);
+    m_tempFile = dir + "/render-" + QUuid::createUuid().toString(QUuid::Id128) + ".mp4";
+    return m_tempFile;
+}
+
+QString ClipJobs::publish(const QString &rendered)
+{
+    QString final = m_finalPath;
+    if (QFileInfo::exists(final)) {  // taken while rendering
+        const QFileInfo fi(final);
+        const QString base = fi.absolutePath() + "/" + fi.completeBaseName();
+        for (int n = 2; QFileInfo::exists(final); ++n) final = QString("%1 (%2).mp4").arg(base).arg(n);
+    }
+    if (!QFile::rename(rendered, final)) {
+        if (!QFile::copy(rendered, final)) return {};
+        QFile::remove(rendered);
+    }
+    m_tempFile.clear();
+    return final;
+}
+
+bool ClipJobs::exportClip(const Clip &clip, const Settings &s, const QString &name)
 {
     if (m_busy) return false;
     m_clipPath = clip.path;
     m_title = clip.title;
     m_sharing = false;
+    if (name.trimmed().isEmpty()) {
+        m_newTitle = clip.title + " (edit)";
+        m_finalPath = uniqueOutputPath(clip.path);
+    } else {
+        m_newTitle = name.trimmed();
+        const QString base = QFileInfo(clip.path).absolutePath() + "/" + ClipLibrary::safeFileName(m_newTitle);
+        m_finalPath = base + ".mp4";
+        for (int n = 2; QFileInfo::exists(m_finalPath); ++n) m_finalPath = QString("%1 (%2).mp4").arg(base).arg(n);
+    }
     setBusy(true);
     emit progress(m_clipPath, stageLabel("Exporting"), 0);
-    m_exporter.start(clip, ExportOptions::forClip(s, clip, false), uniqueOutputPath(clip.path));
+    m_exporter.start(clip, ExportOptions::forClip(s, clip, false), tempOutput());
     return true;
 }
 

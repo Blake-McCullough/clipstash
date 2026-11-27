@@ -31,7 +31,7 @@ public:
 
 signals:
     void backRequested();
-    void exportRequested(const QString &path);
+    void exportRequested(const QString &path, const QString &name, bool openWhenDone);
     void shareRequested(const QString &path);
     void discordRequested(const QString &path);
     void cancelJobRequested();
@@ -40,6 +40,10 @@ signals:
 private:
     void buildTrackRows();
     void refreshInfo();
+    void scrubTo(double seconds, bool finished);
+    void askSaveAsNew();
+    bool m_scrubActive = false;
+    bool m_resumeAfterScrub = false;
     void refreshShare();
     void scheduleSave();
     void togglePlay();

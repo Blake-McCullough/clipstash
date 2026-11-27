@@ -19,7 +19,9 @@ public:
     Uploader *uploader() { return &m_uploader; }
 
     // Render the clip's edits to a new file in the library.
-    bool exportClip(const Clip &clip, const Settings &s);
+    // `name` becomes the new clip's title and file name; empty means
+    // "<title> (edit)" next to the original.
+    bool exportClip(const Clip &clip, const Settings &s, const QString &name = {});
     // Render if needed (so every browser plays the intended mix), then upload.
     bool shareClip(const Clip &clip, const Settings &s);
     // Re-encode the file itself to H.264 in place (same name, date, tracks and
@@ -79,6 +81,10 @@ private:
     QString m_batchError;
     QString m_clipPath;
     QString m_title;
+    QString m_newTitle;   // title for the file being made
+    QString m_finalPath;  // where it goes once complete
+    QString tempOutput();
+    QString publish(const QString &rendered);
     QString m_tempFile;
     QString m_apiKey;
     QStringList m_trackNames;
