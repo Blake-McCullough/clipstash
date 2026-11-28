@@ -33,6 +33,8 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <cstdio>
+#else
+#include <unistd.h>
 #endif
 
 static const char *kAppId = "io.github.blake_mccullough.clipstash";
