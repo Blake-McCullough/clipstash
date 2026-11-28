@@ -82,8 +82,14 @@ jobs:
         timeout-minutes: 5
         run: |
           export CLIPSTASH_REAL_CAPTURE=1 QT_QPA_PLATFORM=offscreen
-          ./build/test_core.exe windowsCapture || { cat "$LOCALAPPDATA/test_core/test_core/recorder.log" 2>/dev/null | tail -60; find "$LOCALAPPDATA" -name recorder.log -path '*test_core*' -exec tail -60 {} \; ; exit 1; }
-          find "$LOCALAPPDATA" -name recorder.log -path '*test_core*' -exec tail -30 {} \;
+          ntldd build/test_core.exe | grep -i "not found" || true
+          set +e
+          ./build/test_core.exe -o result.txt,txt windowsCapture
+          code=$?
+          echo "exit code $code"
+          cat result.txt
+          find "$LOCALAPPDATA" -name recorder.log -exec sh -c 'echo "== $1"; tail -60 "$1"' _ {} \;
+          exit $code
 
       - name: Build installer
         shell: pwsh
