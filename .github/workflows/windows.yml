@@ -37,10 +37,7 @@ jobs:
 
       - name: Build
         run: |
-          which cmake pkg-config pkgconf || true
-          # The native (UCRT64) pkgconf reports Windows paths that CMake understands.
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DPKG_CONFIG_EXECUTABLE="$(cygpath -m /ucrt64/bin/pkgconf.exe)"
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build
           strip build/clipstash.exe
 

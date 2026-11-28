@@ -13,8 +13,19 @@ find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Network OpenGL OpenGLW
 if(NOT WIN32)
   find_package(Qt6 6.4 REQUIRED COMPONENTS DBus)
 endif()
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+if(WIN32)
+  # MSYS2's mpv.pc reports MSYS-style paths CMake can't use; find it directly.
+  find_path(MPV_INCLUDE_DIR mpv/client.h REQUIRED)
+  find_library(MPV_LIBRARY NAMES mpv libmpv REQUIRED)
+  add_library(mpv_lib INTERFACE)
+  target_include_directories(mpv_lib INTERFACE ${MPV_INCLUDE_DIR})
+  target_link_libraries(mpv_lib INTERFACE ${MPV_LIBRARY})
+  set(MPV_TARGET mpv_lib)
+else()
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
+  set(MPV_TARGET PkgConfig::MPV)
+endif()
 
 add_library(clipstash_core STATIC
   src/core/Settings.cpp src/core/Settings.h
@@ -62,7 +73,7 @@ add_executable(clipstash WIN32
   src/ui/HotkeyEdit.cpp src/ui/HotkeyEdit.h
 )
 target_link_libraries(clipstash PRIVATE clipstash_core
-  Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets PkgConfig::MPV)
+  Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets ${MPV_TARGET})
 if(NOT WIN32)
   target_link_libraries(clipstash PRIVATE Qt6::DBus)
 endif()
