@@ -489,6 +489,56 @@ while true; do sleep 0.1; done
         qunsetenv("CLIPSTASH_TEST_VIDEO");
     }
 
+    // Real Windows capture: desktop duplication plus the WASAPI pipes (silent
+    // on a machine with no sound card). Run by the Windows CI only.
+    void windowsCapture()
+    {
+#ifndef Q_OS_WIN
+        QSKIP("Windows only");
+#else
+        if (!qEnvironmentVariableIsSet("CLIPSTASH_REAL_CAPTURE")) QSKIP("set CLIPSTASH_REAL_CAPTURE to run");
+        qunsetenv("CLIPSTASH_TEST_VIDEO");
+        QTemporaryDir dir;
+        Settings s;
+        s.recorderEngine = "ffmpeg";
+        s.videoEncoder = "auto";
+        s.lowResource = true;
+        s.libraryDir = dir.filePath("Clips");
+        s.replaySeconds = 8;
+        s.audioTracks = {{"Desktop", "default_output"}, {"Microphone", "default_input"}};
+        Recorder rec;
+        QSignalSpy saved(&rec, &Recorder::clipSaved);
+        QSignalSpy failed(&rec, &Recorder::saveFailed);
+        QSignalSpy recorded(&rec, &Recorder::recordingSaved);
+        QSignalSpy died(&rec, &Recorder::failed);
+        rec.start(s);
+        QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Running || !died.isEmpty(), 60000);
+        QVERIFY2(died.isEmpty(), died.isEmpty() ? "" : qPrintable(died[0][0].toString()));
+        QTest::qWait(14000);
+        QVERIFY2(rec.state() == Recorder::State::Running, died.isEmpty() ? "stopped" : qPrintable(died[0][0].toString()));
+        QVERIFY(rec.saveReplay());
+        QTest::qWait(600);
+        QVERIFY(rec.saveReplay());
+        QTRY_VERIFY_WITH_TIMEOUT(saved.size() + failed.size() == 2, 30000);
+        QVERIFY2(failed.isEmpty(), failed.isEmpty() ? "" : qPrintable(failed[0][0].toString()));
+        for (const auto &args : saved) {
+            QProcess probe;
+            probe.start("ffprobe", {"-v", "error", "-print_format", "json", "-show_format", "-show_streams", args[0].toString()});
+            QVERIFY(probe.waitForFinished(10000));
+            const ProbeResult r = MediaTools::parseProbeJson(probe.readAllStandardOutput());
+            qInfo() << args[0].toString() << r.duration << r.width << r.height << r.videoCodec << r.audioTitles;
+            QVERIFY2(r.duration > 7.0 && r.duration < 11.0, qPrintable(QString::number(r.duration)));
+            QCOMPARE(r.audioTitles, (QStringList{"Desktop", "Microphone"}));
+        }
+        QVERIFY(rec.toggleFullRecording());
+        QTest::qWait(5000);
+        QVERIFY(rec.toggleFullRecording());
+        QTRY_COMPARE_WITH_TIMEOUT(recorded.size(), 1, 30000);
+        rec.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Stopped, 10000);
+#endif
+    }
+
     // "Save" / "Save as new clip": sources stay separate tracks, the dropped
     // one is gone, and "Save" rewrites the clip itself.
     void saveKeepsSeparateTracks()

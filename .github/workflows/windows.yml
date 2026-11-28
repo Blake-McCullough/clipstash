@@ -37,7 +37,7 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCLIPSTASH_TESTS=ON
           cmake --build build
           strip build/clipstash.exe
 
@@ -77,6 +77,13 @@ jobs:
           PATH="$(pwd)/dist:/c/Windows/System32:/c/Windows" ./dist/clipstash.exe --diagnose > diag.txt 2>&1 || true
           cat diag.txt
           grep -q '^clipstash ' diag.txt
+
+      - name: Record the screen for real
+        timeout-minutes: 5
+        run: |
+          export CLIPSTASH_REAL_CAPTURE=1 QT_QPA_PLATFORM=offscreen
+          ./build/test_core.exe windowsCapture || { cat "$LOCALAPPDATA/test_core/test_core/recorder.log" 2>/dev/null | tail -60; find "$LOCALAPPDATA" -name recorder.log -path '*test_core*' -exec tail -60 {} \; ; exit 1; }
+          find "$LOCALAPPDATA" -name recorder.log -path '*test_core*' -exec tail -30 {} \;
 
       - name: Build installer
         shell: pwsh
