@@ -1,7 +1,11 @@
 #pragma once
 #include "core/Settings.h"
+#ifdef Q_OS_WIN
+#include "hotkeys/WinHotkeys.h"
+#else
 #include "hotkeys/EvdevHotkeys.h"
 #include "hotkeys/PortalHotkeys.h"
+#endif
 
 #include <QElapsedTimer>
 #include <QObject>
@@ -22,10 +26,15 @@ signals:
 private:
     void setStatus(const QString &s);
     void startEvdev(bool isFallback, const QString &why = {});
+    void applyLinux(const Settings &s);
     void fire(const QString &id);
 
+#ifdef Q_OS_WIN
+    WinHotkeys m_win;
+#else
     PortalHotkeys m_portal;
     EvdevHotkeys m_evdev;
+#endif
     Settings m_settings;
     QString m_status;
     QElapsedTimer m_lastFire;

@@ -1,6 +1,9 @@
 #pragma once
 #include "core/Settings.h"
 
+class AudioSources;
+class SegmentBuffer;
+
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QList>
@@ -40,6 +43,12 @@ public:
     QString lastError() const { return m_lastError; }
     // Arguments of the running recorder (empty when not running).
     QStringList runningArgs() const { return isActive() ? m_args : QStringList{}; }
+    // Would `s` record differently from what is running now?
+    bool runningDiffers(const Settings &s) const { return !isActive() || m_started.recorderConfigDiffers(s); }
+    // Which engine and encoder are running, for the sidebar and diagnostics.
+    QString engineDescription() const { return m_engineText; }
+    // Names of the audio tracks being recorded, in order.
+    QStringList recordedTrackNames() const { return m_trackNames; }
     // How much footage the buffer can hold right now: the replay length, or
     // less if the recorder started only recently.
     int bufferedSeconds() const;
@@ -87,6 +96,7 @@ private:
         int expected = 0;        // seconds the buffer actually held at the press
         bool exact = false;      // signalled immediately with a matching window
         qint64 delayMs = 0;      // press to signal
+        qint64 pressWallMs = 0;  // ffmpeg engine: press time on the buffer's clock
         QElapsedTimer dispatched;
     };
     void finalize(const QString &raw, const Request &r);
@@ -113,4 +123,16 @@ private:
     QDateTime m_fullStartedAt;
     QTimer m_recordingSweep;
     QTimer m_saveWatch;
+
+    // ffmpeg engine
+    bool m_ffmpeg = false;
+    bool m_waitingForProbe = false;
+    SegmentBuffer *m_seg = nullptr;
+    AudioSources *m_audio = nullptr;
+    Settings m_started;
+    QString m_engineText;
+    QStringList m_trackNames;
+    QString m_lastStderr;
+    void startProcess(const Settings &s);
+    void dispatchFfmpeg();
 };

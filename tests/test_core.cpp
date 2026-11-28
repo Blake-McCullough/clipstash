@@ -431,6 +431,64 @@ while true; do sleep 0.1; done
         QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Stopped, 5000);
     }
 
+    // The Windows engine (ffmpeg writing a ring of small pieces), driven here
+    // by a test pattern instead of the desktop: rapid clips and a long recording.
+    void ffmpegEngine()
+    {
+        if (!haveFfmpeg()) QSKIP("ffmpeg not installed");
+        QTemporaryDir dir;
+        qputenv("CLIPSTASH_TEST_VIDEO", "-re -f lavfi -i testsrc2=size=320x180:rate=30");
+        Settings s;
+        s.recorderEngine = "ffmpeg";
+        s.videoEncoder = "cpu";
+        s.lowResource = true;
+        s.libraryDir = dir.filePath("Clips");
+        s.replaySeconds = 8;
+        s.audioTracks = {{"Game", "default_output"}, {"Mic", "default_input"}};
+        Recorder rec;
+        QSignalSpy saved(&rec, &Recorder::clipSaved);
+        QSignalSpy failed(&rec, &Recorder::saveFailed);
+        QSignalSpy recorded(&rec, &Recorder::recordingSaved);
+        rec.start(s);
+        QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Running, 15000);
+        QTest::qWait(11000);
+
+        for (int i = 0; i < 3; ++i) {
+            QVERIFY(rec.saveReplay());
+            QTest::qWait(700);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(saved.size() + failed.size() == 3, 30000);
+        QVERIFY2(failed.isEmpty(), failed.isEmpty() ? "" : qPrintable(failed[0][0].toString()));
+        QSet<QString> paths;
+        for (const auto &args : saved) {
+            const QString path = args[0].toString();
+            paths.insert(path);
+            QProcess probe;
+            probe.start("ffprobe", {"-v", "error", "-print_format", "json", "-show_format", "-show_streams", path});
+            QVERIFY(probe.waitForFinished(10000));
+            const ProbeResult r = MediaTools::parseProbeJson(probe.readAllStandardOutput());
+            QVERIFY2(r.duration > 7.0 && r.duration < 11.0, qPrintable(QString::number(r.duration)));
+            QCOMPARE(r.audioTitles, (QStringList{"Game", "Mic"}));
+        }
+        QCOMPARE(paths.size(), 3);
+
+        QVERIFY(rec.toggleFullRecording());
+        QTest::qWait(5000);
+        QVERIFY(rec.toggleFullRecording());
+        QTRY_COMPARE_WITH_TIMEOUT(recorded.size(), 1, 20000);
+        const QString out = recorded[0][0].toString();
+        QVERIFY2(QFileInfo(out).fileName().startsWith("Recording_"), qPrintable(out));
+        QProcess probe;
+        probe.start("ffprobe", {"-v", "error", "-print_format", "json", "-show_format", "-show_streams", out});
+        QVERIFY(probe.waitForFinished(10000));
+        const double d = MediaTools::parseProbeJson(probe.readAllStandardOutput()).duration;
+        QVERIFY2(d > 4.0 && d < 8.5, qPrintable(QString::number(d)));
+
+        rec.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(rec.state() == Recorder::State::Stopped, 8000);
+        qunsetenv("CLIPSTASH_TEST_VIDEO");
+    }
+
     // "Save" / "Save as new clip": sources stay separate tracks, the dropped
     // one is gone, and "Save" rewrites the clip itself.
     void saveKeepsSeparateTracks()

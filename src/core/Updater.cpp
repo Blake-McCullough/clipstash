@@ -1,5 +1,7 @@
 #include "core/Updater.h"
 
+#include "core/Platform.h"
+
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
@@ -100,7 +102,11 @@ void Updater::downloadAndInstall()
 
     const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/update";
     QDir().mkpath(dir);
+#ifdef Q_OS_WIN
+    const QString path = dir + "/Clipstash-Setup-" + m_latest.version + ".exe";
+#else
     const QString path = dir + "/clipstash-" + m_latest.version;
+#endif
     auto *file = new QFile(path, this);
     if (!file->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         const QString err = file->errorString();
@@ -147,6 +153,10 @@ void Updater::verifyAndInstall(const QString &file)
             return;
         }
     }
+#ifdef Q_OS_WIN
+    install(file);
+    return;
+#endif
     QFile::setPermissions(file, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
                                     | QFileDevice::ReadGroup | QFileDevice::ExeGroup
                                     | QFileDevice::ReadOther | QFileDevice::ExeOther);
@@ -176,6 +186,17 @@ void Updater::verifyAndInstall(const QString &file)
 void Updater::install(const QString &file)
 {
     emit progress("Installing", 1);
+#ifdef Q_OS_WIN
+    // The installer replaces the program folder (Clipstash must be closed for
+    // that), then starts Clipstash again by itself.
+    if (!QProcess::startDetached(file, {"/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"})) {
+        fail("The installer could not be started.");
+        return;
+    }
+    m_busy = false;
+    QCoreApplication::quit();
+    return;
+#endif
     const QString target = QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
     const QFileInfo targetDir(QFileInfo(target).absolutePath());
     const QString version = m_latest.version;
@@ -186,7 +207,7 @@ void Updater::install(const QString &file)
         QFile::remove(staged);
         if (!QFile::copy(file, staged)
             || !QFile::setPermissions(staged, QFile::permissions(file))
-            || ::rename(staged.toLocal8Bit().constData(), target.toLocal8Bit().constData()) != 0) {
+            || !Platform::replaceFile(staged, target)) {
             QFile::remove(staged);
             fail("Could not replace " + target);
             return;

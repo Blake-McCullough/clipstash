@@ -26,7 +26,11 @@ public:
 
     static UpdateInfo parseRelease(const QByteArray &json, const QString &currentVersion);
     static bool isNewer(const QString &candidate, const QString &current);
+#ifdef Q_OS_WIN
+    static QString assetName() { return "Clipstash-Setup-x64.exe"; }
+#else
     static QString assetName() { return "clipstash-x86_64"; }
+#endif
 
     bool busy() const { return m_busy; }
     const UpdateInfo &latest() const { return m_latest; }

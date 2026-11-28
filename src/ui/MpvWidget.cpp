@@ -108,6 +108,7 @@ void MpvWidget::initializeGL()
         {MPV_RENDER_PARAM_INVALID, nullptr},
     };
     // Hand mpv the native display so VAAPI/NVDEC hardware decoding can interop.
+#ifdef Q_OS_LINUX
     if (auto *x11 = qGuiApp->nativeInterface<QNativeInterface::QX11Application>()) {
         params[2] = {MPV_RENDER_PARAM_X11_DISPLAY, x11->display()};
     }
@@ -115,6 +116,7 @@ void MpvWidget::initializeGL()
     else if (auto *wl = qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>()) {
         params[2] = {MPV_RENDER_PARAM_WL_DISPLAY, wl->display()};
     }
+#endif
 #endif
     if (mpv_render_context_create(&m_gl, m_mpv, params) < 0) {
         m_gl = nullptr;

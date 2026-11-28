@@ -28,6 +28,18 @@ struct Settings {
 
     // recorder
     QString recorderBinary = "gpu-screen-recorder";
+    // "gsr" (gpu-screen-recorder, Linux) or "ffmpeg" (Windows).
+#ifdef Q_OS_WIN
+    QString recorderEngine = "ffmpeg";
+#else
+    QString recorderEngine = "gsr";
+#endif
+    // Video encoder: "auto", or nvenc / amf / qsv / cpu (ffmpeg engine),
+    // gpu / cpu (gpu-screen-recorder).
+    QString videoEncoder = "auto";
+    // Least impact on games: 30 fps, at most 1080p, lighter encoder settings,
+    // fixed bitrate and lower process priority.
+    bool lowResource = false;
     QString captureSource = "screen";
     int fps = 60;
     int replaySeconds = 60;

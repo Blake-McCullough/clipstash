@@ -36,6 +36,7 @@ protected:
     void showEvent(QShowEvent *e) override;
 
 private:
+    void fillEncoders(const QString &wanted = {});
     struct TrackRow {
         QWidget *widget;
         QLineEdit *name;
@@ -61,6 +62,8 @@ private:
     QSpinBox *m_bitrate;
     QComboBox *m_resolution;
     QComboBox *m_replayStorage;
+    QComboBox *m_encoder;
+    QCheckBox *m_lowResource;
     QCheckBox *m_cursor;
     QCheckBox *m_restorePortal;
     QLineEdit *m_extraArgs;

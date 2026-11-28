@@ -1,5 +1,7 @@
 #include "core/Exporter.h"
 
+#include "core/SegmentBuffer.h"
+
 #include <QFile>
 
 ExportOptions ExportOptions::fromSettings(const Settings &s)
@@ -15,7 +17,16 @@ ExportOptions ExportOptions::fromSettings(const Settings &s)
 
 QString ExportOptions::autoEncoder()
 {
+#ifdef Q_OS_WIN
+    // Whatever the recorder found working on this PC.
+    const QStringList have = EncoderProbe::instance()->available();
+    if (have.contains("nvenc")) return "h264_nvenc";
+    if (have.contains("amf")) return "h264_amf";
+    if (have.contains("qsv")) return "h264_qsv";
+    return "libx264";
+#else
     return QFile::exists("/proc/driver/nvidia/version") ? "h264_nvenc" : "libx264";
+#endif
 }
 
 ExportOptions ExportOptions::forDiscord(const Settings &s, const Clip &clip, double scale)
@@ -158,6 +169,12 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
                   << "-maxrate" << rate << "-bufsize" << buf << "-pix_fmt" << "yuv420p";
             else if (vaapi)
                 a << "-c:v" << "h264_vaapi" << "-b:v" << rate << "-maxrate" << rate << "-bufsize" << buf;
+            else if (o.encoder == "h264_amf")
+                a << "-c:v" << "h264_amf" << "-rc" << "vbr_peak" << "-b:v" << rate << "-maxrate" << rate
+                  << "-bufsize" << buf << "-pix_fmt" << "yuv420p";
+            else if (o.encoder == "h264_qsv")
+                a << "-c:v" << "h264_qsv" << "-b:v" << rate << "-maxrate" << rate << "-bufsize" << buf
+                  << "-pix_fmt" << "nv12";
             else
                 a << "-c:v" << "libx264" << "-preset" << "medium" << "-b:v" << rate << "-maxrate" << rate
                   << "-bufsize" << buf << "-pix_fmt" << "yuv420p";
@@ -166,6 +183,10 @@ QStringList Exporter::buildArgs(const Clip &clip, const ExportOptions &o, const 
               << "-pix_fmt" << "yuv420p";
         else if (vaapi)
             a << "-c:v" << "h264_vaapi" << "-qp" << q;
+        else if (o.encoder == "h264_amf")
+            a << "-c:v" << "h264_amf" << "-rc" << "cqp" << "-qp_i" << q << "-qp_p" << q << "-pix_fmt" << "yuv420p";
+        else if (o.encoder == "h264_qsv")
+            a << "-c:v" << "h264_qsv" << "-global_quality" << q << "-pix_fmt" << "nv12";
         else
             a << "-c:v" << "libx264" << "-preset" << "veryfast" << "-crf" << q << "-pix_fmt" << "yuv420p";
     }

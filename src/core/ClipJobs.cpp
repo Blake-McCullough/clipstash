@@ -1,6 +1,7 @@
 #include "core/ClipJobs.h"
 
 #include "core/ClipLibrary.h"
+#include "core/Platform.h"
 
 #include <QDir>
 #include <QFile>
@@ -214,7 +215,7 @@ bool ClipJobs::replaceOriginal(const QString &rendered, const QString &original,
     }
     const QDateTime modified = QFileInfo(original).lastModified();
     // rename() swaps the file in one step, so there is never a moment without a clip.
-    if (::rename(rendered.toLocal8Bit().constData(), original.toLocal8Bit().constData()) != 0) {
+    if (!Platform::replaceFile(rendered, original)) {
         *error = "Could not replace the original file; it was left alone.";
         return false;
     }

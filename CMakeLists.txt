@@ -9,7 +9,10 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Network DBus OpenGL OpenGLWidgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Network OpenGL OpenGLWidgets)
+if(NOT WIN32)
+  find_package(Qt6 6.4 REQUIRED COMPONENTS DBus)
+endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(MPV REQUIRED IMPORTED_TARGET mpv)
 
@@ -24,16 +27,29 @@ add_library(clipstash_core STATIC
   src/core/Uploader.cpp src/core/Uploader.h
   src/core/ClipJobs.cpp src/core/ClipJobs.h
   src/core/Updater.cpp src/core/Updater.h
+  src/core/SegmentBuffer.cpp src/core/SegmentBuffer.h
+  src/core/AudioSources.cpp src/core/AudioSources.h
+  src/core/Platform.cpp src/core/Platform.h
 )
 target_include_directories(clipstash_core PUBLIC src)
 target_link_libraries(clipstash_core PUBLIC Qt6::Core Qt6::Gui Qt6::Network)
+if(WIN32)
+  target_link_libraries(clipstash_core PUBLIC ole32)
+endif()
 target_compile_definitions(clipstash_core PUBLIC CLIPSTASH_VERSION="${PROJECT_VERSION}")
 
-add_executable(clipstash
+if(WIN32)
+  set(PLATFORM_SOURCES src/hotkeys/WinHotkeys.cpp src/hotkeys/WinHotkeys.h data/clipstash.rc)
+else()
+  set(PLATFORM_SOURCES
+    src/hotkeys/PortalHotkeys.cpp src/hotkeys/PortalHotkeys.h
+    src/hotkeys/EvdevHotkeys.cpp src/hotkeys/EvdevHotkeys.h)
+endif()
+
+add_executable(clipstash WIN32
   src/main.cpp
+  ${PLATFORM_SOURCES}
   src/hotkeys/HotkeyManager.cpp src/hotkeys/HotkeyManager.h
-  src/hotkeys/PortalHotkeys.cpp src/hotkeys/PortalHotkeys.h
-  src/hotkeys/EvdevHotkeys.cpp src/hotkeys/EvdevHotkeys.h
   src/ui/Theme.cpp src/ui/Theme.h
   src/ui/MainWindow.cpp src/ui/MainWindow.h
   src/ui/LibraryPage.cpp src/ui/LibraryPage.h
@@ -46,15 +62,20 @@ add_executable(clipstash
   src/ui/HotkeyEdit.cpp src/ui/HotkeyEdit.h
 )
 target_link_libraries(clipstash PRIVATE clipstash_core
-  Qt6::Widgets Qt6::DBus Qt6::OpenGL Qt6::OpenGLWidgets PkgConfig::MPV)
+  Qt6::Widgets Qt6::OpenGL Qt6::OpenGLWidgets PkgConfig::MPV)
+if(NOT WIN32)
+  target_link_libraries(clipstash PRIVATE Qt6::DBus)
+endif()
 target_compile_options(clipstash PRIVATE -Wall -Wextra)
 
 include(GNUInstallDirs)
 install(TARGETS clipstash RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(NOT WIN32)
 install(FILES data/io.github.blake_mccullough.clipstash.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES data/io.github.blake_mccullough.clipstash.svg
         DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+endif()
 
 option(CLIPSTASH_TESTS "Build tests" OFF)
 if(CLIPSTASH_TESTS)

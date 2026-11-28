@@ -1,6 +1,11 @@
 #include "core/Recorder.h"
 
+#include <QSet>
+
+#include "core/AudioSources.h"
 #include "core/MediaTools.h"
+#include "core/Platform.h"
+#include "core/SegmentBuffer.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -9,7 +14,10 @@
 #include <QFileInfo>
 
 #include <csignal>
+#ifdef Q_OS_LINUX
 #include <sys/prctl.h>
+#endif
+#include <QUuid>
 
 QString Recorder::logPath()
 {
@@ -37,6 +45,8 @@ int Recorder::bufferedSeconds() const
 
 Recorder::Recorder(QObject *parent) : QObject(parent)
 {
+    m_seg = new SegmentBuffer(this);
+    m_audio = new AudioSources(this);
     // A save that never produces a file must not fail silently.
     m_saveWatch.setInterval(1000);
     connect(&m_saveWatch, &QTimer::timeout, this, [this] {
@@ -68,11 +78,15 @@ Recorder::~Recorder()
     if (m_proc) {
         m_proc->disconnect(this);
         if (m_proc->state() != QProcess::NotRunning) {
-            ::kill(pid_t(m_proc->processId()), SIGINT);
-            if (!m_proc->waitForFinished(2000)) m_proc->kill();
+            if (m_ffmpeg) m_proc->write("q\n");
+#ifndef Q_OS_WIN
+            else ::kill(pid_t(m_proc->processId()), SIGINT);
+#endif
+            if (!m_proc->waitForFinished(3000)) m_proc->kill();
             m_proc->waitForFinished(500);
         }
     }
+    if (m_audio) m_audio->close();
 }
 
 QStringList Recorder::buildArgs(const Settings &s)
@@ -80,11 +94,13 @@ QStringList Recorder::buildArgs(const Settings &s)
     QStringList a;
     a << "-w" << (s.captureSource.isEmpty() ? QString("screen") : s.captureSource);
     a << "-c" << "mp4";
-    a << "-f" << QString::number(qBound(1, s.fps, 500));
+    a << "-f" << QString::number(qBound(1, s.lowResource ? qMin(s.fps, 30) : s.fps, 500));
     a << "-r" << QString::number(qBound(5, s.replaySeconds, 86400) + kHeadroomSeconds);
     a << "-k" << s.codec;
     a << "-ac" << s.audioCodec;
-    if (s.bitrateMode == "cbr") {
+    if (s.lowResource) {
+        a << "-bm" << "cbr" << "-q" << "8000";
+    } else if (s.bitrateMode == "cbr") {
         a << "-bm" << "cbr" << "-q" << QString::number(qMax(500, s.bitrateKbps));
     } else {
         a << "-bm" << (s.bitrateMode == "vbr" ? "vbr" : "qp") << "-q" << s.quality;
@@ -92,7 +108,10 @@ QStringList Recorder::buildArgs(const Settings &s)
     a << "-fm" << s.frameMode;
     a << "-cursor" << (s.recordCursor ? "yes" : "no");
     a << "-replay-storage" << s.replayStorage;
-    if (!s.resolution.trimmed().isEmpty()) a << "-s" << s.resolution.trimmed();
+    QString size = s.resolution.trimmed();
+    if (s.lowResource && (size.isEmpty() || size.section('x', 1).toInt() > 1080)) size = "1920x1080";
+    if (!size.isEmpty()) a << "-s" << size;
+    if (s.videoEncoder == "cpu") a << "-encoder" << "cpu";
     if (s.captureSource == "portal")
         a << "-restore-portal-session" << (s.restorePortalSession ? "yes" : "no");
     const QList<AudioTrackCfg> tracks = s.effectiveTracks();
@@ -117,6 +136,7 @@ void Recorder::setState(State s)
 void Recorder::start(const Settings &s)
 {
     if (m_proc && m_proc->state() != QProcess::NotRunning) return;
+    if (m_waitingForProbe) return;
     if (m_proc) {
         m_proc->disconnect(this);
         m_proc->deleteLater();
@@ -135,17 +155,37 @@ void Recorder::start(const Settings &s)
         return;
     }
 
+    // The ffmpeg engine first needs to know which encoders this PC has.
+    if (s.recorderEngine == "ffmpeg" && !EncoderProbe::instance()->done()) {
+        m_waitingForProbe = true;
+        setState(State::Starting);
+        auto *probe = EncoderProbe::instance();
+        connect(probe, &EncoderProbe::finished, this, [this, s] {
+            m_waitingForProbe = false;
+            if (m_state == State::Starting) startProcess(s);
+        }, Qt::SingleShotConnection);
+        probe->run("ffmpeg");
+        return;
+    }
+    startProcess(s);
+}
+
+void Recorder::startProcess(const Settings &s)
+{
+    m_ffmpeg = s.recorderEngine == "ffmpeg";
+    m_started = s;
     m_proc = new QProcess(this);
     connect(m_proc, &QProcess::readyReadStandardOutput, this, &Recorder::onStdout);
     connect(m_proc, &QProcess::readyReadStandardError, this, [this] {
         const QByteArray chunk = m_proc->readAllStandardError();
         for (const QByteArray &l : chunk.split('\n')) {
             const QString line = QString::fromUtf8(l).trimmed();
-            if (line.isEmpty()) continue;
-            log("gsr: " + line);
+            if (line.isEmpty() || line == m_lastStderr) continue;  // no repeated spam in the log
+            m_lastStderr = line;
+            log((m_ffmpeg ? "ffmpeg: " : "gsr: ") + line);
             // A save the recorder reports as failed: say so now, not after the timeout.
             const QString low = line.toLower();
-            if (m_saving && low.contains("replay")
+            if (!m_ffmpeg && m_saving && low.contains("replay")
                 && (low.contains("fail") || low.contains("error") || low.contains("unable")))
                 failCurrent("The recorder could not save the clip: " + line);
         }
@@ -155,17 +195,20 @@ void Recorder::start(const Settings &s)
     connect(m_proc, &QProcess::finished, this, &Recorder::onFinished);
     connect(m_proc, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
-        m_lastError = QString("Could not start \"%1\". Is gpu-screen-recorder installed?")
-                          .arg(m_proc->program());
+        m_lastError = m_ffmpeg ? QString("Could not start ffmpeg. Reinstall Clipstash to restore it.")
+                               : QString("Could not start \"%1\". Is gpu-screen-recorder installed?").arg(m_proc->program());
+        if (m_audio) m_audio->close();
         setState(State::Failed);
         emit failed(m_lastError);
     });
+    connect(m_proc, &QProcess::started, this, [this] { Platform::tieToApp(m_proc, m_started.lowResource); });
 
+#ifdef Q_OS_LINUX
     // If Clipstash is killed or crashes, take the recorder down with it
     // instead of leaving an orphan capturing in the background.
     m_proc->setChildProcessModifier([] { ::prctl(PR_SET_PDEATHSIG, SIGTERM); });
+#endif
     setState(State::Starting);
-    m_args = buildArgs(s);
     m_replaySeconds = qBound(5, s.replaySeconds, 86400);
     m_libraryDir = s.libraryDir;
     m_queue.clear();
@@ -173,24 +216,55 @@ void Recorder::start(const Settings &s)
     setFullRecording(false);
     recoverIncoming();
     collectRecordings();
-    log("start: " + s.recorderBinary + " " + m_args.join(' '));
+
+    QString program = s.recorderBinary;
+    m_trackNames.clear();
+    if (m_ffmpeg) {
+        const QString dir = SegmentBuffer::defaultDir();
+        QDir(dir).removeRecursively();
+        QDir().mkpath(dir);
+        const QString family = SegmentBuffer::resolveEncoder(s);
+        const QList<QStringList> audio = m_audio->open(s, &m_trackNames);
+        const QStringList testVideo = QProcess::splitCommand(qEnvironmentVariable("CLIPSTASH_TEST_VIDEO"));
+        m_args = SegmentBuffer::buildArgs(s, dir, audio, m_trackNames, family,
+                                          EncoderProbe::instance()->haveScaleD3D11(), testVideo);
+        program = "ffmpeg";
+        m_engineText = EncoderProbe::label(family) + (s.lowResource ? ", low resource mode" : "");
+        m_seg->setTrackNames(m_trackNames);
+        m_seg->begin(dir, m_replaySeconds + kHeadroomSeconds + 10);
+    } else {
+        m_args = buildArgs(s);
+        const QList<AudioTrackCfg> tracks = s.effectiveTracks();
+        for (const AudioTrackCfg &t : tracks)
+            if (!t.sources.trimmed().isEmpty()) m_trackNames << t.name;
+        m_engineText = QString("gpu-screen-recorder") + (s.lowResource ? ", low resource mode" : "");
+    }
+    log("start: " + program + " " + m_args.join(' '));
     m_since.start();
-    m_proc->start(s.recorderBinary, m_args);
+    m_proc->start(program, m_args);
     m_runningTimer.start();
 }
 
 void Recorder::stop()
 {
     m_runningTimer.stop();
+    if (m_waitingForProbe) {
+        m_waitingForProbe = false;
+        setState(State::Stopped);
+        return;
+    }
     if (!m_proc || m_proc->state() == QProcess::NotRunning) {
         m_restartPending = false;
         setState(State::Stopped);
         return;
     }
     m_stopping = true;
-    ::kill(pid_t(m_proc->processId()), SIGINT);
+    if (m_ffmpeg) m_proc->write("q\n");  // ffmpeg finishes the current piece and exits
+#ifndef Q_OS_WIN
+    else ::kill(pid_t(m_proc->processId()), SIGINT);
+#endif
     QProcess *p = m_proc;
-    QTimer::singleShot(3000, p, [p] {
+    QTimer::singleShot(m_ffmpeg ? 5000 : 3000, p, [p] {
         if (p->state() != QProcess::NotRunning) p->kill();
     });
 }
@@ -234,6 +308,7 @@ bool Recorder::saveReplay(int seconds, QString *why)
     r.pressedAt = QDateTime::currentDateTime();
     r.length = seconds > 0 ? qMin(seconds, m_replaySeconds) : m_replaySeconds;
     r.expected = qMin(r.length, bufferedSeconds());
+    r.pressWallMs = m_seg->wallMs();
     m_queue.append(r);
     log(QString("clip requested: %1 s (buffer has %2 s, %3 waiting)")
             .arg(r.length).arg(bufferedSeconds()).arg(m_queue.size() - 1 + (m_saving ? 1 : 0)));
@@ -243,6 +318,11 @@ bool Recorder::saveReplay(int seconds, QString *why)
 
 void Recorder::dispatch()
 {
+    if (m_ffmpeg) {
+        dispatchFfmpeg();
+        return;
+    }
+#ifndef Q_OS_WIN
     while (!m_saving && !m_queue.isEmpty() && m_proc && m_proc->state() == QProcess::Running) {
         Request r = m_queue.takeFirst();
         r.delayMs = r.pressed.elapsed();
@@ -271,6 +351,38 @@ void Recorder::dispatch()
         log(QString("save sent: %1 s clip, %2 ms after the press%3")
                 .arg(r.length).arg(r.delayMs).arg(r.exact ? "" : ", will cut"));
     }
+#endif
+}
+
+void Recorder::dispatchFfmpeg()
+{
+    if (m_saving || m_queue.isEmpty() || !m_proc || m_proc->state() != QProcess::Running) return;
+    Request r = m_queue.takeFirst();
+    r.dispatched.start();
+    m_current = r;
+    m_saving = true;
+    m_saveWatch.start();
+    // The moment of the press in the recording's own time. Join the pieces
+    // around it (a few seconds spare at the start) and trim to the press.
+    const double at = m_seg->streamTimeAt(r.pressWallMs);
+    const QString raw = incomingDir(m_libraryDir) + "/raw-" + QUuid::createUuid().toString(QUuid::Id128) + ".mp4";
+    log(QString("save: %1 s clip ending at %2 s").arg(r.length).arg(at, 0, 'f', 2));
+    QPointer<Recorder> self(this);
+    m_seg->assemble(at, r.length + SegmentBuffer::kSegmentSeconds, raw,
+                    [self, r, raw](bool ok, const QString &error, double delay) {
+        if (!self || !self->m_saving) return;
+        if (!ok) {
+            self->failCurrent(error);
+            return;
+        }
+        Request done = r;
+        done.exact = false;
+        done.delayMs = qint64(delay * 1000);
+        self->m_saving = false;
+        log(QString("joined pieces after %1 ms").arg(r.dispatched.elapsed()));
+        self->finalize(raw, done);
+        self->dispatch();
+    });
 }
 
 void Recorder::failCurrent(const QString &message)
@@ -282,11 +394,16 @@ void Recorder::failCurrent(const QString &message)
     dispatch();
 }
 
+// Names handed to clips that are still being cut, so two presses in the same
+// second never end up writing the same file.
+static QSet<QString> g_reservedNames;
+
 static QString uniqueClipPath(const QString &dir, const QDateTime &at)
 {
     const QString base = dir + "/Replay_" + at.toString("yyyy-MM-dd_HH-mm-ss");
     QString out = base + ".mp4";
-    for (int n = 2; QFileInfo::exists(out); ++n) out = QString("%1_%2.mp4").arg(base).arg(n);
+    for (int n = 2; QFileInfo::exists(out) || g_reservedNames.contains(out); ++n)
+        out = QString("%1_%2.mp4").arg(base).arg(n);
     return out;
 }
 
@@ -323,7 +440,9 @@ void Recorder::recoverIncoming()
 void Recorder::finalize(const QString &raw, const Request &r)
 {
     const QString final = uniqueClipPath(m_libraryDir, r.pressedAt);
+    g_reservedNames.insert(final);
     auto deliver = [this, r, final](const QString &how) {
+        g_reservedNames.remove(final);
         stampTime(final, r.pressedAt);
         log(QString("saved %1 (%2, %3 ms after the press, %4 MB)").arg(final, how).arg(r.pressed.elapsed())
                 .arg(QFileInfo(final).size() / (1024 * 1024)));
@@ -332,13 +451,19 @@ void Recorder::finalize(const QString &raw, const Request &r)
 
     if (r.exact) {
         if (moveFile(raw, final)) deliver("as recorded");
-        else emit saveFailed("Could not move the clip into the clip folder.");
+        else {
+            g_reservedNames.remove(final);
+            emit saveFailed("Could not move the clip into the clip folder.");
+        }
         return;
     }
 
     QPointer<Recorder> self(this);
     MediaTools::probe(raw, [self, raw, r, final, deliver](const ProbeResult &p) {
-        if (!self) return;
+        if (!self) {
+            g_reservedNames.remove(final);
+            return;
+        }
         const double delay = r.delayMs / 1000.0;
         if (!p.ok) {
             if (moveFile(raw, final)) deliver("uncut, could not read it");
@@ -390,8 +515,37 @@ bool Recorder::toggleFullRecording(QString *why)
         return refuse("The recorder is not running.");
     if (m_state == State::Starting || m_since.elapsed() < 2000)
         return refuse("The recorder is still starting. Try again in a moment.");
-    if (::kill(pid_t(m_proc->processId()), SIGRTMIN) != 0) return refuse("Could not signal the recorder.");
     const bool starting = !m_fullRecording;
+    if (m_ffmpeg) {
+        const double at = m_seg->streamTimeAt(m_seg->wallMs());
+        if (starting) {
+            m_seg->startCapture(at);
+            setFullRecording(true);
+            log("full recording started");
+            return true;
+        }
+        log(QString("full recording stopped after %1 s").arg(m_fullSince.elapsed() / 1000));
+        const QDateTime startedAt = m_fullStartedAt;
+        setFullRecording(false);
+        const QString out = recordingDir(m_libraryDir) + "/Recording_"
+                            + startedAt.toString("yyyy-MM-dd_HH-mm-ss") + ".mp4.part";
+        QPointer<Recorder> self(this);
+        m_seg->stopCapture(at, out, [self, out](bool ok, const QString &error) {
+            if (!self) return;
+            if (!ok) {
+                log("recording failed: " + error);
+                emit self->saveFailed("The recording could not be saved: " + error);
+                return;
+            }
+            const QString final = out.chopped(5);  // drop ".part"
+            QFile::rename(out, final);
+            self->collectRecordings(final);
+        });
+        return true;
+    }
+#ifndef Q_OS_WIN
+    if (::kill(pid_t(m_proc->processId()), SIGRTMIN) != 0) return refuse("Could not signal the recorder.");
+#endif
     if (starting) {
         m_recordingSweep.stop();
         setFullRecording(true);
@@ -459,6 +613,24 @@ void Recorder::onStdout()
 void Recorder::onFinished(int code, QProcess::ExitStatus status)
 {
     log(QString("exited: code %1%2").arg(code).arg(status == QProcess::CrashExit ? " (crashed)" : ""));
+    if (m_ffmpeg) {
+        m_audio->close();
+        // A recording in progress keeps what was written so far.
+        if (m_fullRecording && !m_seg->segments().isEmpty()) {
+            const double at = m_seg->segments().last().end;
+            const QString out = recordingDir(m_libraryDir) + "/Recording_"
+                                + m_fullStartedAt.toString("yyyy-MM-dd_HH-mm-ss") + ".mp4.part";
+            m_fullRecording = false;
+            emit fullRecordingChanged(false);
+            QPointer<Recorder> self(this);
+            m_seg->stopCapture(at, out, [self, out](bool ok, const QString &) {
+                if (!self || !ok) return;
+                QFile::rename(out, out.chopped(5));
+                self->collectRecordings(out.chopped(5));
+            });
+        }
+        m_seg->end();
+    }
     if (m_saving || !m_queue.isEmpty()) {
         m_queue.clear();
         m_saving = false;
@@ -486,7 +658,8 @@ void Recorder::onFinished(int code, QProcess::ExitStatus status)
         if (!l.isEmpty()) tail.prepend(l);
     }
     m_lastError = tail.isEmpty()
-        ? QString("gpu-screen-recorder exited (%1)").arg(status == QProcess::CrashExit ? "crashed" : QString::number(code))
+        ? QString("%1 exited (%2)").arg(m_ffmpeg ? "ffmpeg" : "gpu-screen-recorder",
+                                         status == QProcess::CrashExit ? "crashed" : QString::number(code))
         : tail.join('\n');
     setState(State::Failed);
     emit failed(m_lastError);

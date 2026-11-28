@@ -1,4 +1,7 @@
+#include <QtGlobal>
+#ifndef Q_OS_WIN
 #include "hotkeys/PortalHotkeys.h"
+#endif
 #include "ui/MainWindow.h"
 #include "ui/Theme.h"
 
@@ -6,7 +9,6 @@
 #include "core/Exporter.h"
 #include "core/Recorder.h"
 #include "core/Settings.h"
-#include <unistd.h>
 #include <QDirIterator>
 #include <QEvent>
 #include <QScrollBar>
@@ -24,7 +26,12 @@
 #include <QLocalSocket>
 
 #include <clocale>
-#include <unistd.h>
+#include <cstdlib>
+#ifdef Q_OS_WIN
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <cstdio>
+#endif
 
 static const char *kAppId = "io.github.blake_mccullough.clipstash";
 
@@ -45,6 +52,13 @@ static bool sendToRunning(const QString &command)
 // Plain-text report for troubleshooting; never prints the API key.
 static int diagnose()
 {
+#ifdef Q_OS_WIN
+    // A windowed app has no console: borrow the one it was started from.
+    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
+#endif
     QTextStream out(stdout);
     const Settings s = Settings::load();
     out << "clipstash " << CLIPSTASH_VERSION << " (Qt " << qVersion() << ", "
@@ -94,7 +108,7 @@ static int diagnose()
             if (!lines[i].isEmpty()) out << "  " << QString::fromUtf8(lines[i]) << "\n";
     }
     out.flush();
-    _exit(0);  // skip teardown: the library has background probes in flight
+    std::_Exit(0);  // skip teardown: the library has background probes in flight
 }
 
 // Scrolling a page should scroll the page, not change whatever drop-down,
@@ -134,6 +148,10 @@ int main(int argc, char **argv)
     // again it logs a harmless "already associated" warning. Keep it quiet.
     QLoggingCategory::setFilterRules(QStringLiteral("qt.qpa.services.warning=false"));
     QApplication app(argc, argv);
+#ifdef Q_OS_WIN
+    // ffmpeg and ffprobe ship next to clipstash.exe.
+    qputenv("PATH", (QCoreApplication::applicationDirPath().replace('/', '\\') + ";" + qgetenv("PATH")).toLocal8Bit());
+#endif
     QCoreApplication::setOrganizationName("clipstash");
     QCoreApplication::setApplicationName("clipstash");
     QCoreApplication::setApplicationVersion(CLIPSTASH_VERSION);
@@ -166,11 +184,16 @@ int main(int argc, char **argv)
     if (sendToRunning(command)) return 0;
     if (parser.isSet(quit)) return 0;
     if (parser.isSet(saveClip) || parser.isSet(toggle) || parser.isSet(fullRec)) {
+#ifdef Q_OS_WIN
+        if (AttachConsole(ATTACH_PARENT_PROCESS)) freopen("CONOUT$", "w", stderr);
+#endif
         fprintf(stderr, "clipstash is not running\n");
         return 1;
     }
 
+#ifndef Q_OS_WIN
     PortalHotkeys::registerApp(kAppId);
+#endif
     app.setStyleSheet(Theme::styleSheet());
     app.setWindowIcon(Theme::appIcon());
 

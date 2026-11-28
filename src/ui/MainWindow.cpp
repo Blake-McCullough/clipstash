@@ -7,6 +7,7 @@
 
 #include <QMimeData>
 #include "core/MediaTools.h"
+#include "core/Platform.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -586,8 +587,7 @@ void MainWindow::applySettings(const Settings &s)
     }
     // Compare with what the recorder is actually running, so apps noticed by
     // auto split since it started are picked up on this save too.
-    const bool differs = m_recorder.isActive() ? Recorder::buildArgs(m_settings) != m_recorder.runningArgs()
-                                               : s.recorderConfigDiffers(old);
+    const bool differs = m_recorder.isActive() ? m_recorder.runningDiffers(m_settings) : s.recorderConfigDiffers(old);
     if (differs && m_recorder.isActive() && m_recorder.isFullRecording())
         notify("Recording stopped", "The recorder restarted for the new settings, so the recording was ended and saved.");
     if (differs && m_recorder.isActive()) m_recorder.restart(m_settings);
@@ -697,18 +697,7 @@ void MainWindow::notify(const QString &title, const QString &text)
 
 void MainWindow::writeAutostart(bool enabled)
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation) + "/autostart";
-    const QString file = dir + "/io.github.blake_mccullough.clipstash.desktop";
-    if (!enabled) {
-        QFile::remove(file);
-        return;
-    }
-    QDir().mkpath(dir);
-    QFile f(file);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    f.write(QString("[Desktop Entry]\nType=Application\nName=Clipstash\nExec=\"%1\" --minimized --record\n"
-                    "Icon=io.github.blake_mccullough.clipstash\nX-GNOME-Autostart-enabled=true\n")
-                .arg(QCoreApplication::applicationFilePath()).toUtf8());
+    Platform::setAutostart(enabled, QCoreApplication::applicationFilePath(), {"--minimized", "--record"});
 }
 
 void MainWindow::handleCommand(const QString &command)

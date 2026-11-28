@@ -1,11 +1,15 @@
 #include "ui/SettingsPage.h"
 
+#include "core/SegmentBuffer.h"
+
 #include "core/MediaTools.h"
 
 #include "ui/HotkeyEdit.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
@@ -127,7 +131,12 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     });
 
     // --- capture
+#ifdef Q_OS_WIN
+    auto *cap = section(root, "Capture", "Your graphics card records the screen into a short rolling buffer; "
+                                         "only the part you clip is kept.");
+#else
     auto *cap = section(root, "Capture", "gpu-screen-recorder keeps the last moments in memory; nothing is written until you clip.");
+#endif
     m_source = new QComboBox;
     m_source->setEditable(true);
     m_source->setMinimumWidth(420);  // monitor entries read like "DP-6 · 3840x2160"
@@ -140,9 +149,24 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_resolution->setEditable(true);
     m_resolution->addItems({"Native", "3840x2160", "2560x1440", "1920x1080", "1280x720"});
     cap->addRow("Resolution", m_resolution);
+#ifdef Q_OS_WIN
+    m_codec = combo({{"H.264 (plays everywhere, best for sharing)", "h264"}, {"HEVC", "hevc"}, {"AV1", "av1"}});
+#else
     m_codec = combo({{"H.264 (plays everywhere, best for sharing)", "h264"}, {"HEVC", "hevc"}, {"AV1", "av1"},
                      {"HEVC HDR", "hevc_hdr"}, {"AV1 HDR", "av1_hdr"}});
+#endif
     cap->addRow("Video codec", m_codec);
+    m_encoder = new QComboBox;
+    m_encoder->setToolTip("Which chip does the recording. A graphics card encoder (NVENC, AMF, Quick Sync)\n"
+                          "costs games almost nothing; CPU encoding takes processor time from the game.");
+    cap->addRow("Encoder", m_encoder);
+    m_lowResource = new QCheckBox("Low resource mode: lightest possible recording, so games never stutter");
+    m_lowResource->setToolTip("Records at 30 fps, at most 1080p, with a fixed 8 Mbps bitrate and the encoder's\n"
+                              "fastest setting, and runs the recorder at low priority.\n"
+                              "Clips look a little softer in fast motion but the game keeps every frame.");
+    cap->addRow("", m_lowResource);
+    connect(m_lowResource, &QCheckBox::toggled, this, &SettingsPage::updateQualityUi);
+    fillEncoders();
     m_bitrateMode = combo({{"Constant quality", "qp"}, {"Variable bitrate", "vbr"}, {"Constant bitrate", "cbr"}});
     cap->addRow("Rate control", m_bitrateMode);
     m_quality = combo({{"Medium", "medium"}, {"High", "high"}, {"Very high", "very_high"}, {"Ultra", "ultra"}});
@@ -167,6 +191,13 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_extraArgs = new QLineEdit;
     m_extraArgs->setPlaceholderText("Extra gpu-screen-recorder arguments (optional)");
     cap->addRow("Advanced", m_extraArgs);
+#ifdef Q_OS_WIN
+    // gpu-screen-recorder-only options.
+    for (QWidget *w : {static_cast<QWidget *>(m_replayStorage), static_cast<QWidget *>(m_storageWarning),
+                       static_cast<QWidget *>(m_restorePortal), static_cast<QWidget *>(m_extraArgs)})
+        cap->setRowVisible(w, false);
+    m_source->setEditable(false);
+#endif
     connect(m_bitrateMode, &QComboBox::currentIndexChanged, this, &SettingsPage::updateQualityUi);
 
     // --- audio
@@ -221,6 +252,11 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     connect(split, &QPushButton::clicked, this, [this, split] { showSplitMenu(split); });
     m_manualTrackWidgets = {trackHost, addTrack, split};
     m_autoSplitHost = autoHost;
+#ifdef Q_OS_WIN
+    // Needs per-app audio capture, which Windows builds don't have yet.
+    audio->setRowVisible(m_autoSplit, false);
+    audio->setRowVisible(autoHost, false);
+#endif
     connect(m_autoSplit, &QCheckBox::toggled, this, &SettingsPage::updateAutoSplitUi);
     // Ticking it picks up whatever is playing right now, so those apps get
     // their tracks as soon as the settings are saved.
@@ -239,8 +275,12 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
 
     // --- hotkeys
     auto *keys = section(root, "Hotkeys", "Click a box and press the combination. Backspace clears it.");
+#ifdef Q_OS_WIN
+    m_hotkeyBackend = combo({{"On (work while games have focus)", "auto"}, {"Off", "none"}});
+#else
     m_hotkeyBackend = combo({{"Automatic", "auto"}, {"Desktop portal (KDE, Hyprland, GNOME)", "portal"},
                              {"Direct keyboard access (evdev)", "evdev"}, {"Off", "none"}});
+#endif
     keys->addRow("Method", m_hotkeyBackend);
     for (const QString &id : HotkeyIds::all()) {
         auto *edit = new HotkeyEdit;
@@ -285,7 +325,12 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
     m_exportMode = combo({{"Fast: copy video (cuts snap to keyframes)", "copy"},
                           {"Precise: re-encode video (frame-accurate cuts)", "reencode"}});
     exp->addRow("Video", m_exportMode);
+#ifdef Q_OS_WIN
+    m_exportEncoder = combo({{"Automatic", "auto"}, {"x264 (CPU)", "libx264"}, {"NVENC (NVIDIA)", "h264_nvenc"},
+                             {"AMF (AMD)", "h264_amf"}, {"Quick Sync (Intel)", "h264_qsv"}});
+#else
     m_exportEncoder = combo({{"Automatic", "auto"}, {"x264 (CPU)", "libx264"}, {"NVENC (NVIDIA)", "h264_nvenc"}, {"VAAPI (AMD / Intel)", "h264_vaapi"}});
+#endif
     exp->addRow("Encoder", m_exportEncoder);
     m_exportQuality = spin(10, 40);
     m_exportQuality->setToolTip("Lower is better quality and a bigger file.");
@@ -371,9 +416,14 @@ SettingsPage::SettingsPage(QWidget *parent) : QWidget(parent)
 
 void SettingsPage::updateQualityUi()
 {
+    // Low resource mode picks frame rate, size and bitrate itself.
+    const bool low = m_lowResource->isChecked();
     const bool cbr = m_bitrateMode->currentData().toString() == "cbr";
-    m_quality->setEnabled(!cbr);
-    m_bitrate->setEnabled(cbr);
+    m_quality->setEnabled(!cbr && !low);
+    m_bitrate->setEnabled(cbr && !low);
+    m_bitrateMode->setEnabled(!low);
+    m_fps->setEnabled(!low);
+    m_resolution->setEnabled(!low);
 }
 
 void SettingsPage::addTrackRow(const AudioTrackCfg &t)
@@ -424,6 +474,12 @@ void SettingsPage::showSourceMenu(QLineEdit *target, QWidget *anchor)
     QMenu menu(this);
     menu.addAction("Default output (everything you hear)", this, [=] { appendSource(target, "default_output"); });
     menu.addAction("Default input (microphone)", this, [=] { appendSource(target, "default_input"); });
+#ifdef Q_OS_WIN
+    // Windows records the default speakers and microphone; picking single
+    // apps or devices is not supported there yet.
+    menu.exec(anchor->mapToGlobal(QPoint(0, anchor->height() + 2)));
+    return;
+#endif
     QMenu *devices = menu.addMenu("Device");
     for (const auto &[value, desc] : std::as_const(m_devices)) {
         if (value == "default_output" || value == "default_input") continue;
@@ -501,6 +557,8 @@ void SettingsPage::setSettings(const Settings &s)
     m_resolution->setCurrentText(s.resolution.isEmpty() ? "Native" : s.resolution);
     selectData(m_replayStorage, s.replayStorage);
     updateStorageWarning();
+    fillEncoders(s.videoEncoder);
+    m_lowResource->setChecked(s.lowResource);
     m_cursor->setChecked(s.recordCursor);
     m_restorePortal->setChecked(s.restorePortalSession);
     m_extraArgs->setText(s.extraArgs);
@@ -558,6 +616,8 @@ Settings SettingsPage::settings() const
     const QString res = m_resolution->currentText().trimmed();
     s.resolution = res.compare("Native", Qt::CaseInsensitive) == 0 ? QString() : res;
     s.replayStorage = m_replayStorage->currentData().toString();
+    s.videoEncoder = m_encoder->currentData().toString();
+    s.lowResource = m_lowResource->isChecked();
     s.recordCursor = m_cursor->isChecked();
     s.restorePortalSession = m_restorePortal->isChecked();
     s.extraArgs = m_extraArgs->text().trimmed();
@@ -626,7 +686,11 @@ void SettingsPage::setKnownApps(const QStringList &apps)
 
 void SettingsPage::updateAutoSplitUi()
 {
+#ifdef Q_OS_WIN
+    const bool on = false;
+#else
     const bool on = m_autoSplit->isChecked();
+#endif
     for (QWidget *w : std::as_const(m_manualTrackWidgets)) w->setVisible(!on);
     m_autoSplitHost->setVisible(on);
     m_autoSplitInfo->setText(m_knownApps.isEmpty()
@@ -650,8 +714,56 @@ void SettingsPage::showEvent(QShowEvent *e)
     refreshDevices();
 }
 
+void SettingsPage::fillEncoders(const QString &wanted)
+{
+    const QString keep = wanted.isEmpty() ? m_encoder->currentData().toString() : wanted;
+    m_encoder->clear();
+#ifdef Q_OS_WIN
+    EncoderProbe *probe = EncoderProbe::instance();
+    const QStringList have = probe->available();
+    QString best;
+    for (const QString &f : {"nvenc", "amf", "qsv"})
+        if (best.isEmpty() && have.contains(f)) best = f;
+    m_encoder->addItem(probe->done() ? QString("Automatic (%1)").arg(EncoderProbe::label(best.isEmpty() ? "cpu" : best))
+                                     : QString("Automatic (checking your graphics card…)"), "auto");
+    for (const QString &f : {"nvenc", "amf", "qsv"})
+        if (have.contains(f)) m_encoder->addItem(EncoderProbe::label(f), f);
+    m_encoder->addItem(EncoderProbe::label("cpu") + " — uses the processor, can slow games", "cpu");
+    if (!probe->done()) {
+        connect(probe, &EncoderProbe::finished, this, [this] { fillEncoders(); }, Qt::SingleShotConnection);
+        probe->run("ffmpeg");
+    }
+#else
+    m_encoder->addItem("Automatic (graphics card)", "auto");
+    m_encoder->addItem("CPU (software) — uses the processor, can slow games", "cpu");
+#endif
+    const int i = m_encoder->findData(keep);
+    // A saved choice the card no longer has (driver change): show it anyway.
+    if (i < 0 && !keep.isEmpty() && keep != "auto") m_encoder->addItem(keep + " (not detected)", keep);
+    m_encoder->setCurrentIndex(qMax(0, m_encoder->findData(keep)));
+}
+
 void SettingsPage::refreshDevices()
 {
+#ifdef Q_OS_WIN
+    // Desktop Duplication numbers outputs in the order Windows lists them.
+    const QString current = m_source->currentData().isValid() ? m_source->currentData().toString()
+                                                               : m_base.captureSource;
+    m_source->clear();
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    for (int i = 0; i < screens.size(); ++i) {
+        const QScreen *sc = screens[i];
+        const QSize px = sc->size() * sc->devicePixelRatio();
+        m_source->addItem(QString("Display %1%2 · %3x%4 · %5")
+                              .arg(i + 1).arg(sc == QGuiApplication::primaryScreen() ? " (main)" : "")
+                              .arg(px.width()).arg(px.height()).arg(sc->name()),
+                          QString("monitor:%1").arg(i));
+    }
+    int idx = m_source->findData(current);
+    if (idx < 0) idx = m_source->findData("monitor:" + current);  // older plain numbers
+    m_source->setCurrentIndex(qMax(0, idx));
+    return;
+#endif
     const QString bin = m_base.recorderBinary;
     MediaTools::gsrList(bin, "--list-audio-devices", [this](const MediaTools::NamedList &l) { m_devices = l; });
     MediaTools::gsrList(bin, "--list-application-audio", [this](const MediaTools::NamedList &l) { m_apps = l; });

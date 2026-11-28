@@ -83,6 +83,9 @@ Settings Settings::load()
     c.libraryDir = normalizeDir(c.libraryDir);
 
     str("recorder/binary", c.recorderBinary);
+    str("recorder/engine", c.recorderEngine);
+    str("recorder/videoEncoder", c.videoEncoder);
+    flag("recorder/lowResource", c.lowResource);
     str("recorder/captureSource", c.captureSource);
     num("recorder/fps", c.fps);
     num("recorder/replaySeconds", c.replaySeconds);
@@ -110,6 +113,9 @@ Settings Settings::load()
     }
 
     flag("recorder/autoSplitAudio", c.autoSplitAudio);
+#ifdef Q_OS_WIN
+    c.autoSplitAudio = false;  // needs per-app capture, Linux only for now
+#endif
     c.knownApps = s.value("recorder/knownApps").toStringList();
 
     flag("app/recordOnLaunch", c.recordOnLaunch);
@@ -154,6 +160,9 @@ void Settings::save() const
     s.setValue("storage/libraryDir", libraryDir);
 
     s.setValue("recorder/binary", recorderBinary);
+    s.setValue("recorder/engine", recorderEngine);
+    s.setValue("recorder/videoEncoder", videoEncoder);
+    s.setValue("recorder/lowResource", lowResource);
     s.setValue("recorder/captureSource", captureSource);
     s.setValue("recorder/fps", fps);
     s.setValue("recorder/replaySeconds", replaySeconds);
@@ -213,6 +222,7 @@ void Settings::save() const
 bool Settings::recorderConfigDiffers(const Settings &o) const
 {
     return libraryDir != o.libraryDir || recorderBinary != o.recorderBinary
+        || recorderEngine != o.recorderEngine || videoEncoder != o.videoEncoder || lowResource != o.lowResource
         || captureSource != o.captureSource || fps != o.fps
         || replaySeconds != o.replaySeconds || codec != o.codec
         || audioCodec != o.audioCodec || bitrateMode != o.bitrateMode

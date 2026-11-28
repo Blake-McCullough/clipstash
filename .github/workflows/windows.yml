@@ -1,0 +1,93 @@
+name: Windows build
+
+# Builds the Windows installer. Runs on pushes that touch the code (so a
+# broken Windows build shows up straight away) and is called by the release
+# workflow, which attaches the installer to the GitHub release.
+on:
+  push:
+    branches: [main, windows]
+    paths: ["src/**", "data/**", "packaging/**", "CMakeLists.txt", ".github/workflows/windows.yml"]
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-mpv
+            mingw-w64-ucrt-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-ntldd
+            zip
+
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          strip build/clipstash.exe
+
+      - name: Check the bundled ffmpeg
+        run: |
+          ffmpeg -hide_banner -version | head -1
+          for f in ddagrab scale_d3d11 hwdownload; do
+            ffmpeg -hide_banner -filters 2>/dev/null | grep -q " $f " && echo "filter $f: yes" || echo "filter $f: MISSING"
+          done
+          for e in h264_nvenc hevc_nvenc av1_nvenc h264_amf hevc_amf av1_amf h264_qsv hevc_qsv av1_qsv libx264; do
+            ffmpeg -hide_banner -encoders 2>/dev/null | grep -q " $e " && echo "encoder $e: yes" || echo "encoder $e: MISSING"
+          done
+
+      - name: Collect files
+        run: |
+          mkdir -p dist
+          cp build/clipstash.exe /ucrt64/bin/ffmpeg.exe /ucrt64/bin/ffprobe.exe dist/
+          deploy=$(command -v windeployqt6 || command -v windeployqt-qt6 || command -v windeployqt)
+          "$deploy" --release --no-translations --no-system-d3d-compiler --no-opengl-sw \
+            --no-compiler-runtime dist/clipstash.exe
+          # Every DLL the programs and Qt plugins load from MSYS2 (mpv, ffmpeg, Qt, runtime).
+          for round in 1 2 3; do
+            find dist -name '*.exe' -o -name '*.dll' | while read -r f; do
+              ntldd -R "$f" 2>/dev/null | grep -i 'ucrt64' | sed -E 's/.*=> (.*\.dll).*/\1/I' | tr '\\' '/'
+            done | sort -u | while read -r dll; do
+              dll=$(cygpath -u "$dll")
+              [ -f "dist/$(basename "$dll")" ] || cp "$dll" dist/
+            done
+          done
+          ls dist | head -200
+          du -sh dist
+
+      - name: Smoke test
+        continue-on-error: true
+        timeout-minutes: 2
+        run: ./dist/clipstash.exe --diagnose | head -60
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path CMakeLists.txt -Pattern 'project\(clipstash VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc "/DAppVersion=$version" "/DSourceDir=..\dist" packaging\clipstash.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-FileHash Clipstash-Setup-x64.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  Clipstash-Setup-x64.exe" } | Out-File -Encoding ascii Clipstash-Setup-x64.exe.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clipstash-windows
+          path: |
+            Clipstash-Setup-x64.exe
+            Clipstash-Setup-x64.exe.sha256
