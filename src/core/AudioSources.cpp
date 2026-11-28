@@ -383,13 +383,13 @@ QList<QStringList> AudioSources::open(const Settings &s, QStringList *names)
                 continue;
             }
             d->tracks.push_back(std::move(track));
-            inputs << QStringList{"-thread_queue_size", "4096", "-f", "f32le", "-ar", "48000", "-ac", "2", "-i", pipe};
+            inputs << QStringList{"-f", "f32le", "-ar", "48000", "-ac", "2", "-i", pipe};
 #else
             // Linux with the ffmpeg engine: PulseAudio/PipeWire devices.
             const QString src = sources.first();
             const QString dev = src == "default_output" ? "@DEFAULT_MONITOR@"
                                 : src == "default_input" ? "default" : src.section(':', 1);
-            inputs << QStringList{"-thread_queue_size", "4096", "-f", "pulse", "-i", dev};
+            inputs << QStringList{"-f", "pulse", "-i", dev};
 #endif
         }
         if (names) *names << t.name;
