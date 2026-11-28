@@ -1,6 +1,6 @@
 # Clipstash
 
-Instant-replay clipping for Linux, in the spirit of Medal / ShadowPlay.
+Instant-replay clipping for Linux and Windows, in the spirit of Medal / ShadowPlay.
 [gpu-screen-recorder](https://git.dec05eba.com/gpu-screen-recorder/about/) runs in the
 background keeping the last minute or so in memory; press a hotkey and the clip lands in
 your clip folder, ready to trim, re-mix and share.
@@ -32,6 +32,29 @@ Or build a package: `cd packaging && makepkg -si`.
 If `gpu-screen-recorder` is not in your repos, get it from the AUR (`paru -S gpu-screen-recorder`).
 
 Then start **Clipstash** from the app launcher, or run `clipstash`.
+
+## Install (Windows 10 / 11)
+
+Download **Clipstash-Setup-x64.exe** from the
+[latest release](https://github.com/Blake-McCullough/clipstash/releases/latest) and run it.
+It installs for your user only (no admin prompt) and includes everything it needs (ffmpeg
+and the video player), so there is nothing else to install.
+
+On Windows the recording is done by ffmpeg using Desktop Duplication and your graphics
+card's encoder, keeping the replay as short pieces on disk that roll over:
+
+- **Settings → Capture → Encoder** – *Automatic* picks NVIDIA NVENC, then AMD AMF, then
+  Intel Quick Sync, whichever works on your PC; you can also pick one, or the CPU (x264),
+  which takes processor time from games.
+- **Low resource mode** – 30 fps, at most 1080p, a fixed 8 Mbps bitrate, the encoder's
+  fastest setting and a low-priority recorder. Use it if recording makes a game stutter.
+  It works on Linux too.
+- If Desktop Duplication isn't available (some laptops, remote desktop), Clipstash switches
+  to a slower "compatibility capture" by itself.
+- Audio tracks can use the default speakers (everything you hear) and the default
+  microphone. Per-app tracks and auto split are Linux-only for now.
+- Hotkeys work while games have focus. Start-with-the-computer uses the normal Windows
+  startup list.
 
 ## First run
 
@@ -101,6 +124,7 @@ Clipstash checks this repository's GitHub releases when it starts and shows an
 **Update** button in the sidebar when a newer version is out. **Settings → Updates** downloads
 the new build, verifies it, and replaces the installed program. If Clipstash lives in a system
 folder such as `/usr/bin`, your desktop asks for your password to do that. Then restart.
+On Windows it downloads the new installer, runs it silently and Clipstash starts again by itself.
 
 Releases are built automatically: change the version in `CMakeLists.txt`, push to `main`,
 and GitHub Actions builds, tests and publishes the release for that version.
