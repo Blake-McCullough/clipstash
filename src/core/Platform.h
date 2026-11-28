@@ -1,4 +1,5 @@
 #pragma once
+#include <QRect>
 #include <QString>
 
 class QProcess;
@@ -11,4 +12,7 @@ bool replaceFile(const QString &from, const QString &to);
 void tieToApp(QProcess *process, bool lowPriority);
 // Puts Clipstash in (or takes it out of) the list of apps started at login.
 bool setAutostart(bool on, const QString &exe, const QStringList &args);
+// Desktop rectangle of monitor `index` in physical pixels (Windows; empty elsewhere
+// or if there is no such monitor).
+QRect monitorRect(int index);
 }

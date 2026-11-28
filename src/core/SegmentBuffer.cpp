@@ -149,15 +149,22 @@ QString SegmentBuffer::resolveEncoder(const Settings &s)
 
 QStringList SegmentBuffer::buildArgs(const Settings &s, const QString &dir, const QList<QStringList> &audioInputs,
                                      const QStringList &trackNames, const QString &family, bool haveScaleFilter,
-                                     const QStringList &testVideo)
+                                     const QStringList &testVideo, const QRect &gdiArea)
 {
     const bool low = s.lowResource;
     const int fps = qBound(1, low ? qMin(s.fps, 30) : s.fps, 240);
-    const bool gpuFrames = testVideo.isEmpty();  // screen capture hands over GPU textures
+    // Desktop Duplication hands over GPU textures; the GDI fallback and the
+    // test pattern give ordinary frames in memory.
+    const bool gdi = testVideo.isEmpty() && gdiArea.isValid();
+    const bool gpuFrames = testVideo.isEmpty() && !gdi;
     QStringList a{"-hide_banner", "-nostats", "-loglevel", "warning", "-y"};
 
     if (!testVideo.isEmpty()) {
         a << testVideo;
+    } else if (gdi) {
+        a << "-f" << "gdigrab" << "-framerate" << QString::number(fps) << "-draw_mouse" << (s.recordCursor ? "1" : "0")
+          << "-offset_x" << QString::number(gdiArea.x()) << "-offset_y" << QString::number(gdiArea.y())
+          << "-video_size" << QString("%1x%2").arg(gdiArea.width()).arg(gdiArea.height()) << "-i" << "desktop";
     } else {
         a << "-f" << "lavfi" << "-i"
           << QString("ddagrab=output_idx=%1:framerate=%2:draw_mouse=%3")
@@ -174,7 +181,7 @@ QStringList SegmentBuffer::buildArgs(const Settings &s, const QString &dir, cons
     }
     if (gpuFrames && family == "cpu") vf << "hwdownload" << "format=bgra";
     if (gpuFrames && family == "qsv") vf << "hwmap=derive_device=qsv" << "format=qsv";
-    if (!gpuFrames && family == "cpu") vf << "format=yuv420p";
+    if (!gpuFrames) vf << (family == "cpu" ? "format=yuv420p" : "format=nv12");
     if (!vf.isEmpty()) a << "-vf" << vf.join(',');
 
     // Encoder.

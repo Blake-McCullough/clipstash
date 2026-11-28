@@ -1,5 +1,7 @@
 #include "core/Platform.h"
 
+#include <QList>
+
 #include <QDir>
 #include <QFile>
 #include <QProcess>
@@ -82,4 +84,29 @@ bool setAutostart(bool on, const QString &exe, const QStringList &args)
 #endif
 }
 
+}
+
+QRect Platform::monitorRect([[maybe_unused]] int index)
+{
+#ifdef Q_OS_WIN
+    struct Ctx {
+        QList<QRect> rects;
+    } ctx;
+    EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR mon, HDC, LPRECT, LPARAM data) -> BOOL {
+        MONITORINFO info{};
+        info.cbSize = sizeof info;
+        if (GetMonitorInfoW(mon, &info)) {
+            const RECT &r = info.rcMonitor;
+            const QRect rect(r.left, r.top, r.right - r.left, r.bottom - r.top);
+            auto *c = reinterpret_cast<Ctx *>(data);
+            // Primary first, like Desktop Duplication usually numbers them.
+            if (info.dwFlags & MONITORINFOF_PRIMARY) c->rects.prepend(rect);
+            else c->rects.append(rect);
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&ctx));
+    return ctx.rects.value(index);
+#else
+    return {};
+#endif
 }

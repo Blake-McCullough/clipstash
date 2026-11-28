@@ -226,10 +226,16 @@ void Recorder::startProcess(const Settings &s)
         const QString family = SegmentBuffer::resolveEncoder(s);
         const QList<QStringList> audio = m_audio->open(s, &m_trackNames);
         const QStringList testVideo = QProcess::splitCommand(qEnvironmentVariable("CLIPSTASH_TEST_VIDEO"));
+        QRect gdiArea;
+        if (m_gdiFallback && testVideo.isEmpty()) {
+            gdiArea = Platform::monitorRect(s.captureSource.section(':', -1).toInt());
+            if (!gdiArea.isValid()) gdiArea = Platform::monitorRect(0);
+        }
         m_args = SegmentBuffer::buildArgs(s, dir, audio, m_trackNames, family,
-                                          EncoderProbe::instance()->haveScaleD3D11(), testVideo);
+                                          EncoderProbe::instance()->haveScaleD3D11(), testVideo, gdiArea);
         program = "ffmpeg";
-        m_engineText = EncoderProbe::label(family) + (s.lowResource ? ", low resource mode" : "");
+        m_engineText = EncoderProbe::label(family) + (s.lowResource ? ", low resource mode" : "")
+                       + (gdiArea.isValid() ? ", compatibility capture" : "");
         m_seg->setTrackNames(m_trackNames);
         m_seg->begin(dir, m_replaySeconds + kHeadroomSeconds + 10);
     } else {
@@ -642,6 +648,16 @@ void Recorder::onFinished(int code, QProcess::ExitStatus status)
         QTimer::singleShot(500, this, [this] { collectRecordings(); });
     }
     m_runningTimer.stop();
+    if (m_ffmpeg && !m_stopping && !m_gdiFallback && m_stderrTail.contains("ddagrab")
+        && Platform::monitorRect(0).isValid()) {
+        // Desktop Duplication isn't available (no graphics driver, remote
+        // desktop, some hybrid laptops): fall back to the slower GDI capture.
+        log("desktop duplication failed, switching to compatibility capture");
+        m_gdiFallback = true;
+        const Settings again = m_started;
+        QTimer::singleShot(0, this, [this, again] { start(again); });
+        return;
+    }
     if (m_stopping) {
         setState(State::Stopped);
         if (m_restartPending) {

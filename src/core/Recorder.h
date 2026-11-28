@@ -133,6 +133,8 @@ private:
     QString m_engineText;
     QStringList m_trackNames;
     QString m_lastStderr;
+    // Desktop Duplication failed on this PC: capture with GDI instead.
+    bool m_gdiFallback = false;
     void startProcess(const Settings &s);
     void dispatchFfmpeg();
 };

@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QList>
 #include <QObject>
+#include <QRect>
 #include <QPointer>
 #include <QStringList>
 #include <QTimer>
@@ -35,7 +36,8 @@ public:
     // screen capture input (used by the tests).
     static QStringList buildArgs(const Settings &s, const QString &dir, const QList<QStringList> &audioInputs,
                                  const QStringList &trackNames, const QString &encoderFamily, bool haveScaleFilter,
-                                 const QStringList &testVideo = {});
+                                 const QStringList &testVideo = {},
+                                 const QRect &gdiArea = {});
 
     // Starts watching `dir` for finished pieces (ffmpeg is started by the caller).
     void begin(const QString &dir, int keepSeconds);
