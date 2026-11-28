@@ -245,9 +245,15 @@ public:
     {
         m_stop = true;
         if (m_thread.joinable()) {
-            CancelSynchronousIo(m_thread.native_handle());
+            // The thread may be blocked waiting for ffmpeg or in a write:
+            // keep cancelling its pipe calls until it notices m_stop.
+            while (!m_finished) {
+                if (HANDLE h = m_handle.load()) CancelSynchronousIo(h);
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
             m_thread.join();
         }
+        if (HANDLE h = m_handle.exchange(nullptr)) CloseHandle(h);
         if (m_pipe != INVALID_HANDLE_VALUE) {
             CloseHandle(m_pipe);
             m_pipe = INVALID_HANDLE_VALUE;
@@ -257,6 +263,11 @@ public:
 private:
     void run()
     {
+        m_handle = OpenThread(THREAD_TERMINATE, FALSE, GetCurrentThreadId());
+        struct Done {
+            std::atomic<bool> &flag;
+            ~Done() { flag = true; }
+        } done{m_finished};
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         if (!ConnectNamedPipe(m_pipe, nullptr) && GetLastError() != ERROR_PIPE_CONNECTED) {
             CoUninitialize();
@@ -309,6 +320,8 @@ private:
     QStringList m_sources;
     HANDLE m_pipe = INVALID_HANDLE_VALUE;
     std::thread m_thread;
+    std::atomic<HANDLE> m_handle{nullptr};
+    std::atomic<bool> m_finished{false};
     std::atomic<bool> m_stop{false};
 };
 }

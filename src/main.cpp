@@ -35,7 +35,11 @@
 
 static const char *kAppId = "io.github.blake_mccullough.clipstash";
 
+#ifdef Q_OS_WIN
+static QString socketName() { return "clipstash-" + qEnvironmentVariable("USERNAME"); }
+#else
 static QString socketName() { return QString("clipstash-%1").arg(getuid()); }
+#endif
 
 // Returns true if a running instance took the command.
 static bool sendToRunning(const QString &command)
