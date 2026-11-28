@@ -722,11 +722,11 @@ void SettingsPage::fillEncoders(const QString &wanted)
     EncoderProbe *probe = EncoderProbe::instance();
     const QStringList have = probe->available();
     QString best;
-    for (const QString &f : {"nvenc", "amf", "qsv"})
+    for (const QString &f : QStringList{"nvenc", "amf", "qsv"})
         if (best.isEmpty() && have.contains(f)) best = f;
     m_encoder->addItem(probe->done() ? QString("Automatic (%1)").arg(EncoderProbe::label(best.isEmpty() ? "cpu" : best))
                                      : QString("Automatic (checking your graphics card…)"), "auto");
-    for (const QString &f : {"nvenc", "amf", "qsv"})
+    for (const QString &f : QStringList{"nvenc", "amf", "qsv"})
         if (have.contains(f)) m_encoder->addItem(EncoderProbe::label(f), f);
     m_encoder->addItem(EncoderProbe::label("cpu") + " — uses the processor, can slow games", "cpu");
     if (!probe->done()) {
