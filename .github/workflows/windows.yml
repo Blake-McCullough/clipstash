@@ -71,9 +71,12 @@ jobs:
           du -sh dist
 
       - name: Smoke test
-        continue-on-error: true
         timeout-minutes: 2
-        run: ./dist/clipstash.exe --diagnose | head -60
+        run: |
+          # Only the folder's own files: proves nothing is missing from the bundle.
+          PATH="$(pwd)/dist:/c/Windows/System32:/c/Windows" ./dist/clipstash.exe --diagnose > diag.txt 2>&1 || true
+          cat diag.txt
+          grep -q '^clipstash ' diag.txt
 
       - name: Build installer
         shell: pwsh

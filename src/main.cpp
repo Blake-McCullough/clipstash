@@ -8,8 +8,10 @@
 #include "core/ClipLibrary.h"
 #include "core/Exporter.h"
 #include "core/Recorder.h"
+#include "core/SegmentBuffer.h"
 #include "core/Settings.h"
 #include <QDirIterator>
+#include <QEventLoop>
 #include <QEvent>
 #include <QScrollBar>
 #include <QAbstractSlider>
@@ -57,8 +59,9 @@ static bool sendToRunning(const QString &command)
 static int diagnose()
 {
 #ifdef Q_OS_WIN
-    // A windowed app has no console: borrow the one it was started from.
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+    // A windowed app has no console: borrow the one it was started from,
+    // unless the output is already going somewhere (a pipe or a file).
+    if (GetFileType(GetStdHandle(STD_OUTPUT_HANDLE)) == FILE_TYPE_UNKNOWN && AttachConsole(ATTACH_PARENT_PROCESS)) {
         freopen("CONOUT$", "w", stdout);
         freopen("CONOUT$", "w", stderr);
     }
@@ -96,10 +99,27 @@ static int diagnose()
         const QString path = QStandardPaths::findExecutable(name);
         out << name << ": " << (path.isEmpty() ? "NOT FOUND" : path) << "\n";
     };
+#ifdef Q_OS_WIN
+    tool("ffmpeg");
+    tool("ffprobe");
+    {
+        // Which graphics card encoders work here (the same check the recorder does).
+        QEventLoop loop;
+        EncoderProbe *probe = EncoderProbe::instance();
+        QObject::connect(probe, &EncoderProbe::finished, &loop, &QEventLoop::quit);
+        probe->run("ffmpeg");
+        if (!probe->done()) loop.exec();
+        out << "encoders: " << probe->available().join(", ") << ", d3d11 scaling: "
+            << (probe->haveScaleD3D11() ? "yes" : "no") << "\n";
+        out << "recorder uses: " << EncoderProbe::label(SegmentBuffer::resolveEncoder(s))
+            << (s.lowResource ? ", low resource mode" : "") << "\n";
+    }
+#else
     tool(s.recorderBinary);
     tool("ffmpeg");
     tool("ffprobe");
     out << "recorder args: " << Recorder::buildArgs(s).join(' ') << "\n";
+#endif
     out << "hotkeys: " << s.hotkeyBackend << "\n";
     out << "pixeldrain key: " << (s.pixeldrainKey.isEmpty() ? "not set" : "set") << "\n";
     out << "export: mode=" << s.exportVideoMode << " encoder=" << s.exportEncoder
